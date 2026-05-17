@@ -1,13 +1,15 @@
-FROM nvidia/cuda:13.0.0-runtime-ubuntu22.04
+# Shift to Ubuntu 24.04 to natively support Python 3.12 packages
+FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install system utilities, native Python 3 platform, and media codecs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    python3.12 \
+    python3 \
     python3-pip \
-    python3.12-venv \
-    python3.12-dev \
+    python3-venv \
+    python3-dev \
     ffmpeg \
     libgl1-mesa-glx \
     libglib2.0-0 \
@@ -16,16 +18,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app/ComfyUI
 
-RUN python3.12 -m venv /app/ComfyUI/.venv
+# Establish the isolated environment using native Python (3.12)
+RUN python3 -m venv /app/ComfyUI/.venv
 ENV PATH="/app/ComfyUI/.venv/bin:$PATH"
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
+# Install the matching PyTorch CUDA engine
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 
+# Pull the core ComfyUI architecture
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && pip install --no-cache-dir -r requirements.txt
 
+# Pre-bake all your custom node dependencies natively
 RUN pip install --no-cache-dir \
     gguf \
     opencv-python \
@@ -43,6 +49,7 @@ RUN pip install --no-cache-dir \
     scikit-image \
     onnxruntime-gpu
 
+# Inject the proprietary NVIDIA VFX bindings
 RUN pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
 EXPOSE 8188
