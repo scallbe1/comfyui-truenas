@@ -15,21 +15,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Upgrade core build tools globally
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel --break-system-packages
+# Upgrade core build tools globally using explicit python3 module paths
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel --break-system-packages
 
 # Match your TrueNAS host driver (found 12080): Fetch the optimized CUDA 12.6 engine
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126 --break-system-packages
+RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126 --break-system-packages
 
 # Move directly to the ComfyUI workspace root
 WORKDIR /app/ComfyUI
 
 # Pull the core ComfyUI architecture safely into the empty folder
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
-    && pip install --no-cache-dir -r requirements.txt --break-system-packages
+    && python3 -m pip install --no-cache-dir -r requirements.txt --break-system-packages
 
 # Pre-bake all your custom node dependencies natively
-RUN pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python \
     imageio-ffmpeg \
@@ -48,7 +48,7 @@ RUN pip install --no-cache-dir \
     --break-system-packages
 
 # Inject the proprietary NVIDIA VFX bindings 
-RUN pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com --break-system-packages
+RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com --break-system-packages
 
 EXPOSE 8188
 
