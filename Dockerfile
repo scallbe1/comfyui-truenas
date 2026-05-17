@@ -2,11 +2,11 @@ FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install system utilities, native Python 3 platform, and graphics tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
     python3-pip \
-    python3-venv \
     python3-dev \
     ffmpeg \
     libgl1 \
@@ -15,22 +15,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 1. Create the virtual environment in a clean, isolated root folder
-WORKDIR /app
-RUN python3 -m venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+# Upgrade core build tools globally
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel --break-system-packages
 
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# Match your TrueNAS host driver (found 12080): Fetch the optimized CUDA 12.6 engine
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126 --break-system-packages
 
-# 2. Pre-install the optimized PyTorch CUDA 13 engine
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
-
-# 3. Switch to the ComfyUI workspace (completely empty) and clone safely
+# Move directly to the ComfyUI workspace root
 WORKDIR /app/ComfyUI
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
-    && pip install --no-cache-dir -r requirements.txt
 
-# 4. Pre-bake all your custom node dependencies natively
+# Pull the core ComfyUI architecture safely into the empty folder
+RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
+    && pip install --no-cache-dir -r requirements.txt --break-system-packages
+
+# Pre-bake all your custom node dependencies natively
 RUN pip install --no-cache-dir \
     gguf \
     opencv-python \
@@ -46,10 +44,11 @@ RUN pip install --no-cache-dir \
     av \
     einops \
     scikit-image \
-    onnxruntime-gpu
+    onnxruntime-gpu \
+    --break-system-packages
 
-# 5. Inject custom Nvidia Maxine VFX bindings
-RUN pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
+# Inject the proprietary NVIDIA VFX bindings 
+RUN pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com --break-system-packages
 
 EXPOSE 8188
 
