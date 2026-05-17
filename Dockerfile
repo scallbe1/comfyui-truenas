@@ -1,9 +1,7 @@
-# Natively targets Python 3.12 stack with clean Ubuntu 24 OS
 FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install modern graphics linkages, utilities, and video tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -17,22 +15,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app/ComfyUI
-
-# Isolate python virtual environment execution path
-RUN python3 -m venv /app/ComfyUI/.venv
-ENV PATH="/app/ComfyUI/.venv/bin:$PATH"
+# 1. Create the virtual environment in a clean, isolated root folder
+WORKDIR /app
+RUN python3 -m venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Fetch optimized PyTorch CUDA 13 engine
+# 2. Pre-install the optimized PyTorch CUDA 13 engine
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 
-# Pull latest ComfyUI core source
+# 3. Switch to the ComfyUI workspace (completely empty) and clone safely
+WORKDIR /app/ComfyUI
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && pip install --no-cache-dir -r requirements.txt
 
-# Pre-bake node frameworks natively to prevent ephemeral wiped state
+# 4. Pre-bake all your custom node dependencies natively
 RUN pip install --no-cache-dir \
     gguf \
     opencv-python \
@@ -50,7 +48,7 @@ RUN pip install --no-cache-dir \
     scikit-image \
     onnxruntime-gpu
 
-# Inject custom Nvidia Maxine VFX bindings
+# 5. Inject custom Nvidia Maxine VFX bindings
 RUN pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
 EXPOSE 8188
