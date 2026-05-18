@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libsndfile1 \
     portaudio19-dev \
+    libasound2-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Hardlink the pip commands so ComfyUI-Manager's subprocess scanner can always find them
@@ -30,7 +31,7 @@ WORKDIR /app/ComfyUI
 # STEP 1: Fetch the optimized CUDA 12.6 core engine
 RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-# STEP 2: Pre-install mandatory compilation tools required by insightface and audio tools
+# STEP 2: Pre-install mandatory compilation tools required by complex packages
 RUN python3 -m pip install --no-cache-dir setuptools wheel cython numpy
 
 # STEP 3: Pull the core ComfyUI architecture safely into the workspace root
@@ -47,10 +48,12 @@ RUN python3 -m pip install --no-cache-dir \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
     ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything
 
-# STEP 6: Install the specialized Cloud and Audio Production / Music Synthesis suites
-RUN python3 -m pip install --no-cache-dir \
-    fal-client runwayml openai pedalboard openai-whisper \
-    audiocraft stable-audio-tools librosa scipy pyloudnorm noisereduce
+# STEP 6a: Pre-install core audio signal processing math structures
+RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce
+
+# STEP 6b: Install specialized Cloud and Audio Production APIs with flexible dependency matching
+RUN python3 -m pip install --no-cache-dir --use-deprecated=legacy-resolver \
+    fal-client runwayml openai openai-whisper audiocraft stable-audio-tools
 
 # STEP 7: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
