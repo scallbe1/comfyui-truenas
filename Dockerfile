@@ -30,7 +30,7 @@ RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-u
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Pre-bake your complete custom node dependency pack (Core + Video + ControlNet + FaceSwap)
+# Pre-bake your complete custom node dependency pack (Core + Video + ControlNet + FaceSwap + Impact + Cloud)
 RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python \
@@ -61,7 +61,9 @@ RUN python3 -m pip install --no-cache-dir \
     basicsr \
     pedalboard \
     openai-whisper \
-    insightface
+    insightface \
+    segment-anything \
+    fal-client
 
 # Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
