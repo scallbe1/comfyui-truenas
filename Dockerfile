@@ -1,10 +1,9 @@
-FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04
+FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-# Globally opens up package paths for both Docker layers and ComfyUI-Manager
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
-# Install utilities, modern codecs, and the explicit alias link for ComfyUI-Manager
+# Install system utilities, native Python 3 platform, and graphics tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -18,16 +17,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Fix for ComfyUI-Manager package routing tools inside standard containers
+RUN ln -s /usr/bin/pip3 /usr/bin/pip || true
+
 WORKDIR /app/ComfyUI
 
-# Fits perfectly under your host's 12.8 ceiling: Fetch the optimized CUDA 12.6 engine
+# Fetch the optimized CUDA 12.6 engine
 RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-# Clone the core ComfyUI architecture safely into the workspace root
+# Pull the core ComfyUI architecture safely into the empty folder
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Pre-bake your custom node dependency pack natively
+# Pre-bake your custom node dependency pack natively (including GitPython and py-cpuinfo)
 RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python \
@@ -43,7 +45,9 @@ RUN python3 -m pip install --no-cache-dir \
     av \
     einops \
     scikit-image \
-    onnxruntime-gpu
+    onnxruntime-gpu \
+    GitPython \
+    py-cpuinfo
 
 # Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
