@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Globally unlocks system paths so ComfyUI-Manager can install extensions via the web UI
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
-# Install system utilities, native Python 3 platform, and graphics tools
+# Install system utilities, native Python 3 platform, compilers, and graphics tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -26,11 +26,11 @@ WORKDIR /app/ComfyUI
 # Fetch the optimized CUDA 12.6 engine matching your hardware layout
 RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-# Pull the core ComfyUI architecture safely into the empty folder
+# Pull the core ComfyUI architecture safely into the workspace root
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Pre-bake your custom node dependency pack (Injected: color-matcher)
+# Pre-bake your complete custom node dependency pack (Core + Video + ControlNet + FaceSwap)
 RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python \
@@ -51,7 +51,17 @@ RUN python3 -m pip install --no-cache-dir \
     py-cpuinfo \
     toml \
     pynvml \
-    color-matcher
+    color-matcher \
+    ultralytics \
+    timm \
+    fvcore \
+    onnx \
+    safetensors \
+    facexlib \
+    basicsr \
+    pedalboard \
+    openai-whisper \
+    insightface
 
 # Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
