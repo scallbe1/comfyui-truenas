@@ -1,15 +1,16 @@
 FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-# Globally bypasses the Ubuntu system package lock for both Docker and ComfyUI-Manager
+# Globally opens up package paths for both Docker layers and ComfyUI-Manager
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
-# Install system utilities, native Python 3 platform, and graphics tools
+# Install utilities, modern codecs, and the explicit alias link for ComfyUI-Manager
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
     python3-pip \
     python3-dev \
+    python-is-python3 \
     ffmpeg \
     libgl1 \
     libglx-mesa0 \
@@ -19,11 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app/ComfyUI
 
-# Pull the core ComfyUI architecture safely into the empty folder
+# Fits perfectly under your host's 12.8 ceiling: Fetch the optimized CUDA 12.6 engine
+RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# Clone the core ComfyUI architecture safely into the workspace root
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Pre-bake all your custom node dependencies natively
+# Pre-bake your custom node dependency pack natively
 RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python \
