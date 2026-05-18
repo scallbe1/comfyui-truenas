@@ -1,6 +1,8 @@
 FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+# Globally bypasses the Ubuntu system package lock for both Docker and ComfyUI-Manager
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 # Install system utilities, native Python 3 platform, and graphics tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,18 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Upgrade core build tools globally using explicit python3 module paths
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel --break-system-packages
-
-# Match your TrueNAS host driver (found 12080): Fetch the optimized CUDA 12.6 engine
-RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126 --break-system-packages
-
-# Move directly to the ComfyUI workspace root
 WORKDIR /app/ComfyUI
 
 # Pull the core ComfyUI architecture safely into the empty folder
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
-    && python3 -m pip install --no-cache-dir -r requirements.txt --break-system-packages
+    && python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Pre-bake all your custom node dependencies natively
 RUN python3 -m pip install --no-cache-dir \
@@ -44,11 +39,10 @@ RUN python3 -m pip install --no-cache-dir \
     av \
     einops \
     scikit-image \
-    onnxruntime-gpu \
-    --break-system-packages
+    onnxruntime-gpu
 
 # Inject the proprietary NVIDIA VFX bindings 
-RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com --break-system-packages
+RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
 EXPOSE 8188
 
