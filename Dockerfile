@@ -30,7 +30,7 @@ RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-u
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Pre-bake your complete custom node dependency pack (Injected: toml, pynvml)
+# Pre-bake your custom node dependency pack (Injected: color-matcher)
 RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python \
@@ -50,7 +50,8 @@ RUN python3 -m pip install --no-cache-dir \
     GitPython \
     py-cpuinfo \
     toml \
-    pynvml
+    pynvml \
+    color-matcher
 
 # Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
