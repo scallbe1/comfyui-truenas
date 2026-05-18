@@ -1,10 +1,9 @@
 FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-# Globally unlocks system paths so ComfyUI-Manager can install extensions via the web UI
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
-# Install system utilities, native Python 3 platform, compilers, and graphics/audio backends
+# Install system utilities, native Python 3 platform, compilers, and crucial Audio/Vision system backends
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -16,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglx-mesa0 \
     libglib2.0-0 \
     build-essential \
+    libsndfile1 \
+    portaudio19-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Hardlink the pip commands so ComfyUI-Manager's subprocess scanner can always find them
@@ -26,61 +27,35 @@ RUN mkdir -p /etc && echo '[global]' > /etc/pip.conf && echo 'break-system-packa
 
 WORKDIR /app/ComfyUI
 
-# Fetch the optimized CUDA 12.6 engine matching your hardware layout
+# STEP 1: Fetch the optimized CUDA 12.6 core engine
 RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-# Pull the core ComfyUI architecture safely into the workspace root
+# STEP 2: Pre-install mandatory compilation tools required by insightface and audio tools
+RUN python3 -m pip install --no-cache-dir setuptools wheel cython numpy
+
+# STEP 3: Pull the core ComfyUI architecture safely into the workspace root
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Pre-bake your complete dependency pack
-# Includes: Vision, Video, FaceSwap, ControlNet, Impact SAM2, Cloud Generation, and Music Synthesis/Audio-Reactives
+# STEP 4: Install the stable, core Python utility and monitoring pack
 RUN python3 -m pip install --no-cache-dir \
-    gguf \
-    opencv-python \
-    imageio-ffmpeg \
-    PyWavelets \
-    deepdiff \
-    matplotlib \
-    piexif \
-    soundfile \
-    sentencepiece \
-    transformers \
-    accelerate \
-    av \
-    einops \
-    scikit-image \
-    onnxruntime-gpu \
-    GitPython \
-    py-cpuinfo \
-    toml \
-    pynvml \
-    color-matcher \
-    ultralytics \
-    timm \
-    fvcore \
-    onnx \
-    safetensors \
-    facexlib \
-    basicsr \
-    pedalboard \
-    openai-whisper \
-    insightface \
-    segment-anything \
-    fal-client \
-    runwayml \
-    openai \
-    audiocraft \
-    stable-audio-tools \
-    librosa \
-    scipy \
-    pyloudnorm \
-    noisereduce
+    GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
-# Inject the specialized SAM2 tracking binaries directly from Facebook Research
+# STEP 5: Install the heavy Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
+RUN python3 -m pip install --no-cache-dir \
+    gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
+    transformers accelerate av einops scikit-image onnxruntime-gpu \
+    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything
+
+# STEP 6: Install the specialized Cloud and Audio Production / Music Synthesis suites
+RUN python3 -m pip install --no-cache-dir \
+    fal-client runwayml openai pedalboard openai-whisper \
+    audiocraft stable-audio-tools librosa scipy pyloudnorm noisereduce
+
+# STEP 7: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
 
-# Inject the proprietary NVIDIA VFX bindings 
+# STEP 8: Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
 EXPOSE 8188
