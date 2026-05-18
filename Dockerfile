@@ -1,7 +1,6 @@
 FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-# Globally unlocks system paths so ComfyUI-Manager can install extensions via the web UI
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 # Install system utilities, native Python 3 platform, compilers, and graphics tools
@@ -21,6 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Hardlink the pip commands so ComfyUI-Manager's subprocess scanner can always find them
 RUN ln -sf /usr/bin/pip3 /usr/bin/pip && ln -sf /usr/bin/python3 /usr/bin/python
 
+# 🌟 CRITICAL FIX: Force wide-open pip execution via a permanent system file.
+# This stops sub-shells and standalone install.py scripts from losing the bypass environment variable.
+RUN mkdir -p /etc && echo '[global]' > /etc/pip.conf && echo 'break-system-packages = true' >> /etc/pip.conf
+
 WORKDIR /app/ComfyUI
 
 # Fetch the optimized CUDA 12.6 engine matching your hardware layout
@@ -30,7 +33,7 @@ RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-u
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Pre-bake your complete custom node dependency pack (Core + Video + ControlNet + FaceSwap + Impact + Cloud)
+# Pre-bake your complete custom node dependency pack
 RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python \
