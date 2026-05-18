@@ -51,9 +51,9 @@ RUN python3 -m pip install --no-cache-dir \
 # STEP 6a: Pre-install core audio signal processing math structures
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce
 
-# STEP 6b: Install specialized Cloud and Audio Production APIs with flexible dependency matching
-RUN python3 -m pip install --no-cache-dir --use-deprecated=legacy-resolver \
-    fal-client runwayml openai openai-whisper audiocraft stable-audio-tools
+# STEP 6b: Install specialized Cloud, Speech-to-Text, and Audio Separation packages cleanly
+RUN python3 -m pip install --no-cache-dir \
+    fal-client runwayml openai openai-whisper stable-audio-tools demucs
 
 # STEP 7: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
