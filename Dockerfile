@@ -20,8 +20,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Hardlink the pip commands so ComfyUI-Manager's subprocess scanner can always find them
-RUN ln -sf /usr/bin/pip3 /usr/bin/pip && ln -sf /usr/bin/python3 /usr/bin/python
+# Hardlink the pip commands into both standard system binary locations and local user bins to satisfy validation scanners
+RUN ln -sf /usr/bin/pip3 /usr/bin/pip && \
+    ln -sf /usr/bin/python3 /usr/bin/python && \
+    mkdir -p /usr/local/bin && \
+    ln -sf /usr/bin/pip3 /usr/local/bin/pip && \
+    ln -sf /usr/bin/python3 /usr/local/bin/python
 
 # Force wide-open pip execution via a permanent system file for isolated sub-installers
 RUN mkdir -p /etc && echo '[global]' > /etc/pip.conf && echo 'break-system-packages = true' >> /etc/pip.conf
