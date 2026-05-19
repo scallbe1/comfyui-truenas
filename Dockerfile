@@ -42,24 +42,27 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
 RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
-# STEP 5: Install the heavy Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
+# STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
     ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything
 
-# STEP 6a: Pre-install core audio signal processing math structures
-RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce
+# STEP 6: Pre-install core audio signal processing math structures and document tools
+RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab
 
-# STEP 6b: Install specialized Cloud, Speech-to-Text, and Audio Separation packages cleanly
+# STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
 RUN python3 -m pip install --no-cache-dir \
-    fal-client runwayml openai openai-whisper stable-audio-tools demucs
+    fal-client runwayml openai openai-whisper stable-audio-tools
 
-# STEP 7: Inject the specialized SAM2 tracking binaries directly from Facebook Research
+# STEP 8: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
 
-# STEP 8: Inject the proprietary NVIDIA VFX bindings 
+# STEP 9: Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
+
+# STEP 10: Re-verify NumPy alignment across all compiled modules to completely clear the binary size trap
+RUN python3 -m pip install --no-cache-dir -U numpy
 
 EXPOSE 8188
 
