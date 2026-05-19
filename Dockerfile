@@ -57,7 +57,7 @@ RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm no
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
 RUN python3 -m pip install --no-cache-dir \
-    fal-client runwayml openai openai-whisper stable-audio-tools
+    fal-client runwayml openai openai-whisper stable-audio-tools ollama
 
 # STEP 8: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
@@ -65,8 +65,8 @@ RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearc
 # STEP 9: Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
-# STEP 10: Re-verify NumPy alignment across all compiled modules to completely clear the binary size trap
-RUN python3 -m pip install --no-cache-dir -U numpy
+# STEP 10: Clear caching errors and enforce absolute modern NumPy binary specifications globally
+RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy
 
 EXPOSE 8188
 
