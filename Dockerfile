@@ -46,7 +46,7 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
 RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
-# STEP 5: Install Vision, Modeling, and Face-Swap packages
+# STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
@@ -65,8 +65,8 @@ RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearc
 # STEP 9: Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
-# STEP 10: Clear caching errors and enforce absolute modern NumPy binary specifications globally
-RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy
+# STEP 10: Clear caching errors and enforce matched library specifications globally
+RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn
 
 EXPOSE 8188
 
