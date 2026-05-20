@@ -2,6 +2,7 @@ FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV HOME=/tmp
 
 # Install system utilities, native Python 3 platform, compilers, and crucial Audio/Vision system backends
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -36,7 +37,7 @@ WORKDIR /app/ComfyUI
 RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
 # STEP 2: Pre-install mandatory compilation tools required by complex packages
-RUN python3 -m pip install --no-cache-dir setuptools wheel cython numpy
+RUN python3 -m pip install --no-cache-dir setuptools wheel cython "numpy<2.0"
 
 # STEP 3: Pull the core ComfyUI architecture safely into the workspace root
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
@@ -66,7 +67,7 @@ RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearc
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
 # STEP 10: Clear caching errors and enforce matched library specifications globally
-RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn
+RUN python3 -m pip install --no-cache-dir -U --force-reinstall "numpy<2.0" pandas scikit-learn
 
 EXPOSE 8188
 
