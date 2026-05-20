@@ -46,11 +46,11 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
 RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
-# STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
+# STEP 5: Install Vision, Modeling, and Face-Swap packages
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
-    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything
+    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything open-clip-torch
 
 # STEP 6: Pre-install core audio signal processing math structures and document tools
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF
