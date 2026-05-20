@@ -36,7 +36,7 @@ WORKDIR /app/ComfyUI
 # STEP 1: Fetch the optimized CUDA 12.6 core engine
 RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-# STEP 2: Pre-install mandatory compilation tools required by complex packages
+# STEP 2: Pre-install mandatory compilation tools required by complex packages (Constrained to prevent NumPy 2.0 conflicts)
 RUN python3 -m pip install --no-cache-dir setuptools wheel cython "numpy<2.0"
 
 # STEP 3: Pull the core ComfyUI architecture safely into the workspace root
@@ -47,13 +47,14 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
 RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
-# STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
+# STEP 5: Install Vision, Modeling, and Face-Swap packages (Includes open-clip-torch and glitch-this for fill-nodes)
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
-    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything open-clip-torch
+    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything \
+    open-clip-torch glitch-this
 
-# STEP 6: Pre-install core audio signal processing math structures and document tools
+# STEP 6: Pre-install core audio signal processing math structures and document tools (Includes PyPDF2 and PyMuPDF)
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
@@ -66,7 +67,7 @@ RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearc
 # STEP 9: Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
-# STEP 10: Clear caching errors and enforce matched library specifications globally
+# STEP 10: Clear caching errors and enforce matched system-wide dependency specifications matching NumPy 1.x
 RUN python3 -m pip install --no-cache-dir -U --force-reinstall "numpy<2.0" pandas scikit-learn
 
 EXPOSE 8188
