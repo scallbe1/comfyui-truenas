@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV HOME=/tmp
 
-# Install system utilities, native Python 3 platform, compilers, and crucial Audio/Vision system backends
+# Install system utilities, native Python 3 platform, compilers, and crucial Audio/Vision/Graphics system backends
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglx-mesa0 \
     libglib2.0-0 \
+    libopengl0 \
     build-essential \
     libsndfile1 \
     portaudio19-dev \
@@ -36,8 +37,8 @@ WORKDIR /app/ComfyUI
 # STEP 1: Fetch the optimized CUDA 12.6 core engine
 RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-# STEP 2: Pre-install mandatory compilation tools required by complex packages (Constrained to prevent NumPy 2.0 conflicts)
-RUN python3 -m pip install --no-cache-dir setuptools wheel cython "numpy<2.0"
+# STEP 2: Pre-install mandatory compilation tools and provide UV to satisfy ComfyUI-Manager's package scanner
+RUN python3 -m pip install --no-cache-dir setuptools wheel cython "numpy<2.0" uv
 
 # STEP 3: Pull the core ComfyUI architecture safely into the workspace root
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
