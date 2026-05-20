@@ -53,7 +53,7 @@ RUN python3 -m pip install --no-cache-dir \
     ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything
 
 # STEP 6: Pre-install core audio signal processing math structures and document tools
-RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab
+RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
 RUN python3 -m pip install --no-cache-dir \
