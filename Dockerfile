@@ -2,7 +2,7 @@ FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
-ENV HF_TRUST_REMOTE_CODE=1
+ENV HF_TRUST_REMOTE_CODE=1 
 
 # Install system utilities, native Python 3 platform, compilers, and crucial Audio/Vision system backends
 RUN apt-get update && apt-get install -y --no-install-recommends \
