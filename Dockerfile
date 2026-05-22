@@ -52,7 +52,7 @@ RUN python3 -m pip install --no-cache-dir \
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
-    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything open-clip-torch bitsandbytes>=0.46.1
+    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything open-clip-torch bitsandbytes>=0.46.1 kernels
 
 # STEP 6: Pre-install core audio signal processing math structures and document tools (Includes PyPDF2 and PyMuPDF)
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF
