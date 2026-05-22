@@ -52,10 +52,10 @@ RUN python3 -m pip install --no-cache-dir \
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
-    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything open-clip-torch bitsandbytes>=0.46.1 kernels
+    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this
 
-# STEP 6: Pre-install core audio signal processing math structures and document tools (Includes PyPDF2 and PyMuPDF)
-RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF
+# STEP 6: Pre-install core audio signal processing math structures and document tools
+RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
 RUN python3 -m pip install --no-cache-dir \
@@ -69,6 +69,9 @@ RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --i
 
 # STEP 10: Clear caching errors and enforce matched system-wide dependency specifications matching NumPy 1.x
 RUN python3 -m pip install --no-cache-dir -U --force-reinstall "numpy<2.0" pandas scikit-learn
+
+# STEP 11: Install CUDA-accelerated bindings for GGUF LLM processing
+RUN CMAKE_ARGS="-GGPU_BACKEND=CUDA" python3 -m pip install --no-cache-dir llama-cpp-python
 
 EXPOSE 8188
 
