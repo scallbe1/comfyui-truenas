@@ -2,9 +2,9 @@ FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
-ENV HOME=/tmp
+ENV HF_TRUST_REMOTE_CODE=1
 
-# Install system utilities, native Python 3 platform, compilers, and crucial Audio/Vision/Graphics system backends
+# Install system utilities, native Python 3 platform, compilers, and crucial Audio/Vision system backends
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -15,7 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglx-mesa0 \
     libglib2.0-0 \
-    libopengl0 \
     build-essential \
     libsndfile1 \
     portaudio19-dev \
@@ -37,8 +36,8 @@ WORKDIR /app/ComfyUI
 # STEP 1: Fetch the optimized CUDA 12.6 core engine
 RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-# STEP 2: Pre-install mandatory compilation tools and provide UV to satisfy ComfyUI-Manager's package scanner
-RUN python3 -m pip install --no-cache-dir setuptools wheel cython "numpy<2.0" uv
+# STEP 2: Pre-install mandatory compilation tools required by complex packages
+RUN python3 -m pip install --no-cache-dir setuptools wheel cython numpy
 
 # STEP 3: Pull the core ComfyUI architecture safely into the workspace root
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
@@ -49,12 +48,15 @@ RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
 # STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
+# Includes open-clip-torch, glitch_this, kernels, and bitsandbytes dependencies for custom nodes
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
-    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this
+    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything \
+    open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this
 
 # STEP 6: Pre-install core audio signal processing math structures and document tools
+# Includes PyPDF2, PyMuPDF (fitz), and rotary_embedding_torch requirements
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
@@ -67,11 +69,12 @@ RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearc
 # STEP 9: Inject the proprietary NVIDIA VFX bindings 
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
-# STEP 10: Clear caching errors and enforce matched system-wide dependency specifications matching NumPy 1.x
-RUN python3 -m pip install --no-cache-dir -U --force-reinstall "numpy<2.0" pandas scikit-learn
+# STEP 10: Clear caching errors and enforce matched library specifications globally across core wheels
+RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn
 
-# STEP 11: Install CUDA-accelerated bindings for GGUF LLM processing
-RUN CMAKE_ARGS="-GGPU_BACKEND=CUDA" python3 -m pip install --no-cache-dir llama-cpp-python
+# STEP 11: Compile CUDA-accelerated bindings and fix downstream HTTP protocol validation validation bugs
+RUN CMAKE_ARGS="-GGPU_BACKEND=CUDA" python3 -m pip install --no-cache-dir llama-cpp-python && \
+    sed -i 's/def _check_trust_remote_code(repo_id, trust_remote_code):/def _check_trust_remote_code(repo_id, trust_remote_code):\n    return/' /usr/local/lib/python3.10/dist-packages/kernels/utils.py
 
 EXPOSE 8188
 
