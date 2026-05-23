@@ -58,7 +58,7 @@ RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm no
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
 RUN python3 -m pip install --no-cache-dir \
-    fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown
+    fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown google-generativeai
 
 # STEP 8: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
@@ -67,7 +67,7 @@ RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearc
 RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
 
 # STEP 10: Clear caching errors and enforce matched library specifications globally across core wheels
-RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn
+RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn PyWavelets
 
 # STEP 11: Inject the precompiled CUDA-accelerated wheel and overwrite any CPU fallbacks
 RUN python3 -m pip install --no-cache-dir -U --force-reinstall llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu125
