@@ -1,13 +1,11 @@
-FROM nvidia/cuda:12.6.0-devel-ubuntu22.04
+FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
-ENV HF_TRUST_REMOTE_CODE=1
 
 # Install system utilities, native Python 3 platform, compilers, and crucial Audio/Vision system backends
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    cmake \
     python3 \
     python3-pip \
     python3-dev \
@@ -70,9 +68,6 @@ RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --i
 
 # STEP 10: Clear caching errors and enforce matched library specifications globally across core wheels
 RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn
-
-# STEP 11: Compile CUDA-accelerated bindings for GGUF LLM processing
-RUN CMAKE_ARGS="-DGGML_CUDA=on" python3 -m pip install --no-cache-dir llama-cpp-python
 
 EXPOSE 8188
 
