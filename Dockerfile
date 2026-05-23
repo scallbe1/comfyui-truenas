@@ -69,8 +69,8 @@ RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --i
 # STEP 10: Clear caching errors and enforce matched library specifications globally across core wheels
 RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn PyWavelets
 
-# STEP 11: Inject the precompiled CUDA-accelerated wheel and overwrite any CPU fallbacks
-RUN python3 -m pip install --no-cache-dir -U --force-reinstall llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu125
+# STEP 11: Inject the precompiled CUDA-accelerated wheel via the stable cu124 index
+RUN python3 -m pip install --no-cache-dir -U --force-reinstall llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
 
 EXPOSE 8188
 
