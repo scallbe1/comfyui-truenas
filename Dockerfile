@@ -72,9 +72,9 @@ RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --i
 # STEP 10: Clear caching errors and enforce matched library specifications globally across core wheels
 RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn
 
-# STEP 11: Compile CUDA-accelerated bindings and fix downstream HTTP protocol validation validation bugs
-RUN CMAKE_ARGS="-GGPU_BACKEND=CUDA" python3 -m pip install --no-cache-dir llama-cpp-python && \
-    sed -i 's/def _check_trust_remote_code(repo_id, trust_remote_code):/def _check_trust_remote_code(repo_id, trust_remote_code):\n    return/' /usr/local/lib/python3.10/dist-packages/kernels/utils.py
+# STEP 11: Compile CUDA-accelerated bindings and fix downstream HTTP protocol validation bugs
+RUN CMAKE_ARGS="-DGGML_CUDA=on" python3 -m pip install --no-cache-dir llama-cpp-python && \
+    python3 -c "p='/usr/local/lib/python3.10/dist-packages/kernels/utils.py'; s=open(p).read().replace('def _check_trust_remote_code(repo_id, trust_remote_code):', 'def _check_trust_remote_code(repo_id, trust_remote_code):\n    return'); open(p,'w').write(s)"
 
 EXPOSE 8188
 
