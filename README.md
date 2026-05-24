@@ -10,6 +10,8 @@ Warning: change the volume mount points (left of the colon) to align to your loc
 
 YAML:
 
+
+
 services:
   comfyui:
     container_name: comfyui-truenas
