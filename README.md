@@ -11,28 +11,17 @@ Warning: change the volume mount points (left of the colon) to align to your loc
 YAML:
 
 services:
-
   comfyui:
-  
     container_name: comfyui-truenas
-    
     deploy:
-    
       resources:
-      
         reservations:
-        
           devices:
-          
             - capabilities:
-            
                 - gpu
-                
               count: all
-              
               driver: nvidia
-
-              
+             
     environment:
       - UID=1000
       - GID=1000
