@@ -4,7 +4,7 @@ It contains python packages for most of the major nodes for image, video and mus
 
 A sample YAML to deploy ComfyUI onto your TrueNAS deployment is below. One note and one warning:
 
-Note: The line "pull_policy: always" tells TrueNAS to force-download the newest version of the container image from the registry (e.g., Docker Hub) every time you deploy or restart the application. It overrides local caches to ensure your app is strictly running the latest available build
+Note: The line "pull_policy: always" tells TrueNAS to force-download the newest version of the container image from the registry (e.g., Docker Hub) every time you deploy or restart the application. It overrides local caches to ensure your app is strictly running the latest available build.
 
 Warning: change the volume mount points (left of the colon) to align to your local storage layout. Build the 5 datasets below before deploying this app. Do not change the local paths (right side of the colon), these are baked into the ComfyUI image.
 
