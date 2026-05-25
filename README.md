@@ -11,6 +11,7 @@ Storage: Before deploying, create these 5 datasets and create SMB shares. Grant 
 - comfyui-input
 - comfyu-output
 - comfyui-user
+
 Update the local paths (left side of the colon) to match your storage layout. Do not modify the container paths (right side).
 
 YAML:
