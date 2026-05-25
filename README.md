@@ -8,10 +8,6 @@ Note: The line "pull_policy: always" tells TrueNAS to force-download the newest 
 
 Warning: change the volume mount points (left of the colon) to align to your local storage layout. Build the 5 datasets below before deploying this app. Do not change the local paths (right side of the colon), these are baked into the ComfyUI image.
 
-YAML:
-
-
-
 services:
   comfyui:
     container_name: comfyui-truenas
@@ -23,7 +19,6 @@ services:
                 - gpu
               count: all
               driver: nvidia
-             
     environment:
       - UID=1000
       - GID=1000
