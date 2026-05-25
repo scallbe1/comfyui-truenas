@@ -1,12 +1,11 @@
-This is an implementation of ComfyUI designed to be deployed as a custom TrueNAS app. I wrote this in May 2026.
+ComfyUI for TrueNAS
+This containerized ComfyUI implementation (updated May 2026) includes support for major image, video, and music generation nodes, plus CUDA 12.6 support for NVIDIA driver 570.172.08.
 
-It contains python packages for most of the major nodes for image, video and music generation. It deploys CUDA 12.6, which works with the NVIDIA driver in TrueNAS (NVIDIA-SMI 570.172.08).
+Important Setup Notes:
 
-A sample YAML to deploy ComfyUI onto your TrueNAS deployment is below. One note and one warning:
+Update Policy: pull_policy: always ensures you are running the latest image version on every restart.
 
-Note: The line "pull_policy: always" tells TrueNAS to force-download the newest version of the container image from the registry (e.g., Docker Hub) every time you deploy or restart the application. It overrides local caches to ensure your app is strictly running the latest available build.
-
-Warning: change the volume mount points (left of the colon) to align to your local storage layout. Build the 5 datasets below before deploying this app. Do not change the local paths (right side of the colon), these are baked into the ComfyUI image.
+Storage: Before deploying, create the 5 datasets listed below. Update the local paths (left side of the colon) to match your storage layout. Do not modify the container paths (right side). Create SMB shares to each of the 5 datasets. Grant user 1000 and your user account write-permission to those datasets to facilitate uploads and downloads from other devices.
 
 YAML:
 ```
