@@ -5,7 +5,13 @@ Important Setup Notes:
 
 Update Policy: pull_policy: always ensures you are running the latest image version on every restart.
 
-Storage: Before deploying, create the 5 datasets listed below. Update the local paths (left side of the colon) to match your storage layout. Do not modify the container paths (right side). Create SMB shares to each of the 5 datasets. Grant user 1000 and your user account write-permission to those datasets to facilitate uploads and downloads from other devices.
+Storage: Before deploying, create these 5 datasets and create SMB shares. Grant user 1000 and your user account write-permission to those datasets to facilitate uploads and downloads from other devices.
+- comfyui-models
+- comfyui-customnodes
+- comfyui-input
+- comfyu-output
+- comfyui-user
+Update the local paths (left side of the colon) to match your storage layout. Do not modify the container paths (right side).
 
 YAML:
 ```
