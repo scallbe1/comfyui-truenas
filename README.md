@@ -1,4 +1,5 @@
-ComfyUI for TrueNAS
+ComfyUI for TrueNAS - 
+
 This containerized ComfyUI implementation (updated May 2026) includes support for major image, video, and music generation nodes, plus CUDA 12.6 support for NVIDIA driver 570.172.08.
 
 Important Setup Notes:
