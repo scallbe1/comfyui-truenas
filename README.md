@@ -1,4 +1,4 @@
-This is an implementation of ComfyUI designed to be deployed as a custom TrueNAS app.
+This is an implementation of ComfyUI designed to be deployed as a custom TrueNAS app. I wrote this in May 2026.
 
 It contains python packages for most of the major nodes for image, video and music generation. It deploys CUDA 12.6, which works with the NVIDIA driver in TrueNAS (NVIDIA-SMI 570.172.08).
 
