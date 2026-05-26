@@ -32,6 +32,9 @@ RUN mkdir -p /etc && echo '[global]' > /etc/pip.conf && echo 'break-system-packa
 
 WORKDIR /app/ComfyUI
 
+# Pre-install uv to empower ComfyUI-Manager and prevent internal path loop crashes
+RUN python3 -m pip install --no-cache-dir uv
+
 # STEP 1: Fetch the optimized CUDA 12.6 core engine
 RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
@@ -47,19 +50,19 @@ RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
 # STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
+# Added mediapipe here to handle high-accuracy face tracking within the 10S Nodes pack
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
     ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything \
-    open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this
+    open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this mediapipe
 
 # STEP 6: Pre-install core audio signal processing math structures and document tools
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
-# Added langchain-community here to fix the comfyui_llm_party startup failure
 RUN python3 -m pip install --no-cache-dir \
-    fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown google-generativeai langchain-community
+    fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown google-generativeai langchain-community langchain-openai
 
 # STEP 8: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
