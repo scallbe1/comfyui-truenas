@@ -60,10 +60,10 @@ RUN python3 -m pip install --no-cache-dir \
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
-# Added docx2txt here to clear the comfyui_llm_party import error
+# Added openpyxl here to satisfy the final Excel parsing tool inside comfyui_llm_party
 RUN python3 -m pip install --no-cache-dir \
     fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown google-generativeai \
-    langchain-community langchain-openai markdownify neo4j docx2txt
+    langchain-community langchain-openai markdownify neo4j docx2txt openpyxl
 
 # STEP 8: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
