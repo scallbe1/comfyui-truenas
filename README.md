@@ -32,7 +32,7 @@ services:
       - UID=1000
       - GID=1000
       - PORT=8188
-    image: ghcr.io/scallbe1/cui-tn:latest
+    image: ghcr.io/scallbe1/comfyui-truenas:latest
     ports:
       - '8188:8188'
     privileged: True
