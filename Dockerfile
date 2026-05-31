@@ -50,20 +50,21 @@ RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
 # STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
+# Added diffusers here to resolve the WanVideo initialization requirement
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
     ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything \
-    open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this mediapipe
+    open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this mediapipe diffusers
 
 # STEP 6: Pre-install core audio signal processing math structures and document tools
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
-# Added markdownify to satisfy the comfyui_llm_party text parsing requirements
+# Added neo4j here to complete the comfyui_llm_party knowledge graph interface requirements
 RUN python3 -m pip install --no-cache-dir \
     fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown google-generativeai \
-    langchain-community langchain-openai markdownify
+    langchain-community langchain-openai markdownify neo4j
 
 # STEP 8: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
@@ -74,8 +75,9 @@ RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --i
 # STEP 10: Clear caching errors and enforce matched library specifications globally across core wheels
 RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn PyWavelets
 
-# STEP 11: Inject the precompiled CUDA-accelerated wheel via the stable cu124 index
-RUN python3 -m pip install --no-cache-dir -U --force-reinstall llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+# STEP 11: Inject precompiled CUDA llama engines and patch the kernels/transformers initialization conflict
+RUN python3 -m pip install --no-cache-dir -U --force-reinstall llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 && \
+    python3 -c "p='/usr/local/lib/python3.10/dist-packages/kernels/layer/layer.py'; s=open(p).read().replace('raise ValueError(\"Either a revision or a version must be specified.\")', 'revision = \"main\"'); open(p,'w').write(s)"
 
 EXPOSE 8188
 
