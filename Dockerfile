@@ -50,20 +50,21 @@ RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
 # STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
+# Added dynamicprompts here to fix the comfyui-dynamicprompts node boot failure
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
     transformers accelerate av einops scikit-image onnxruntime-gpu \
     ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything \
-    open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this mediapipe diffusers
+    open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this mediapipe diffusers dynamicprompts
 
 # STEP 6: Pre-install core audio signal processing math structures and document tools
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
-# Added openpyxl here to satisfy the final Excel parsing tool inside comfyui_llm_party
+# Added pdfplumber here to finalize the comfyui_llm_party file ingestion module tracking
 RUN python3 -m pip install --no-cache-dir \
     fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown google-generativeai \
-    langchain-community langchain-openai markdownify neo4j docx2txt openpyxl
+    langchain-community langchain-openai markdownify neo4j docx2txt openpyxl pdfplumber
 
 # STEP 8: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
