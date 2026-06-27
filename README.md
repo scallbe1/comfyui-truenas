@@ -20,7 +20,6 @@ YAML:
 services:
   comfyui:
     container_name: comfyui-truenas
-    user: "568:568"
     deploy:
       resources:
         reservations:
@@ -30,8 +29,8 @@ services:
               count: all
               driver: nvidia
     environment:
-      - UID=568
-      - GID=568
+      - UID=1000
+      - GID=1000
       - PORT=8188
     image: ghcr.io/scallbe1/comfyui-truenas:latest
     ports:
