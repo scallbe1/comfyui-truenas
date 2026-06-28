@@ -50,10 +50,10 @@ RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
 # STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
-# Added 'peft' here to natively support multi-modal segmentation tracking out of the box
+# Added 'peft' and 'supervision' to satisfy vision/SAM2 dependencies out of the box
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
-    transformers accelerate av einops scikit-image onnxruntime-gpu peft \
+    transformers accelerate av einops scikit-image onnxruntime-gpu peft supervision \
     ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything \
     open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this mediapipe diffusers dynamicprompts
 
@@ -61,7 +61,7 @@ RUN python3 -m pip install --no-cache-dir \
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
-# Added 'wikipedia' and 'streamlit' to satisfy comfyui_llm_party nodes cleanly on boot
+# Added 'wikipedia', 'streamlit', and 'neo4j' to satisfy comfyui_llm_party layouts natively
 RUN python3 -m pip install --no-cache-dir \
     fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown google-generativeai \
     langchain-community langchain-openai markdownify neo4j docx2txt openpyxl pdfplumber xlrd \
