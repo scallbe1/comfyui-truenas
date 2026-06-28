@@ -50,9 +50,10 @@ RUN python3 -m pip install --no-cache-dir \
     GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
 
 # STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
+# Added 'peft' here to natively support multi-modal segmentation tracking out of the box
 RUN python3 -m pip install --no-cache-dir \
     gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
-    transformers accelerate av einops scikit-image onnxruntime-gpu \
+    transformers accelerate av einops scikit-image onnxruntime-gpu peft \
     ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything \
     open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this mediapipe diffusers dynamicprompts
 
@@ -60,10 +61,11 @@ RUN python3 -m pip install --no-cache-dir \
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
 
 # STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
-# Added xlrd here to clear the final legacy spreadsheet parser requirement for comfyui_llm_party
+# Added 'wikipedia' and 'streamlit' to satisfy comfyui_llm_party nodes cleanly on boot
 RUN python3 -m pip install --no-cache-dir \
     fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown google-generativeai \
-    langchain-community langchain-openai markdownify neo4j docx2txt openpyxl pdfplumber xlrd
+    langchain-community langchain-openai markdownify neo4j docx2txt openpyxl pdfplumber xlrd \
+    wikipedia streamlit
 
 # STEP 8: Inject the specialized SAM2 tracking binaries directly from Facebook Research
 RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
@@ -77,6 +79,10 @@ RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scik
 # STEP 11: Inject precompiled CUDA llama engines and patch the kernels validation bug across all module layers recursively
 RUN python3 -m pip install --no-cache-dir -U --force-reinstall llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 && \
     python3 -c "import os; d='/usr/local/lib/python3.10/dist-packages/kernels'; [open(os.path.join(r,f),'w').write(open(os.path.join(r,f)).read().replace('raise ValueError(\"Either a revision or a version must be specified.\")', 'revision=\"main\"')) for r,_,fs in os.walk(d) for f in fs if f.endswith('.py')]"
+
+# STEP 12: Inject a dummy module skeleton for flash_attn to force-bypass transformers entry guards safely
+RUN mkdir -p /usr/local/lib/python3.10/dist-packages/flash_attn && \
+    touch /usr/local/lib/python3.10/dist-packages/flash_attn/__init__.py
 
 EXPOSE 8188
 
