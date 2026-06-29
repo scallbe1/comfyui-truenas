@@ -57,6 +57,8 @@ RUN python3 -m pip install --no-cache-dir \
     ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything \
     open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this mediapipe diffusers dynamicprompts
 
+RUN python3 -m pip install --no-cache-dir sentencepiece tiktoken
+
 # STEP 6: Pre-install core audio signal processing math structures and document tools
 RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
 
