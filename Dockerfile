@@ -1,9 +1,15 @@
-FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.0-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV PYTHONUNBUFFERED=1
 
-# Install system utilities, native Python 3 platform, compilers, and crucial Audio/Vision system backends
+# Build controls for CUDA-backed llama-cpp-python
+ENV CMAKE_BUILD_PARALLEL_LEVEL=4
+ENV FORCE_CMAKE=1
+ENV CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=89"
+
+# Install system utilities, Python, CUDA build tools, audio/vision libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3 \
@@ -13,82 +19,178 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgl1 \
     libglx-mesa0 \
+    libopengl0 \
     libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
     libsndfile1 \
     portaudio19-dev \
     libasound2-dev \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Hardlink the pip commands into both standard system binary locations and local user bins to satisfy validation scanners
+# Normalize python/pip paths
 RUN ln -sf /usr/bin/pip3 /usr/bin/pip && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     mkdir -p /usr/local/bin && \
     ln -sf /usr/bin/pip3 /usr/local/bin/pip && \
     ln -sf /usr/bin/python3 /usr/local/bin/python
 
-# Force wide-open pip execution via a permanent system file for isolated sub-installers
-RUN mkdir -p /etc && echo '[global]' > /etc/pip.conf && echo 'break-system-packages = true' >> /etc/pip.conf
+# Allow pip installs into the system Python used by this container
+RUN mkdir -p /etc && \
+    echo '[global]' > /etc/pip.conf && \
+    echo 'break-system-packages = true' >> /etc/pip.conf
 
 WORKDIR /app/ComfyUI
 
-# Pre-install uv to empower ComfyUI-Manager and prevent internal path loop crashes
-RUN python3 -m pip install --no-cache-dir uv
-
-# STEP 1: Fetch the optimized CUDA 12.6 core engine
+# Upgrade base Python tooling
 RUN python3 -m pip install --no-cache-dir --upgrade \
-    torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
+    pip \
+    setuptools \
+    wheel \
+    cython \
+    uv \
+    numpy
+
+# STEP 1: Install PyTorch CUDA 12.6
+RUN python3 -m pip install --no-cache-dir --upgrade \
+    torch==2.11.0 \
+    torchvision==0.26.0 \
+    torchaudio==2.11.0 \
     --index-url https://download.pytorch.org/whl/cu126
 
-# STEP 2: Pre-install mandatory compilation tools required by complex packages
-RUN python3 -m pip install --no-cache-dir setuptools wheel cython numpy
-
-# STEP 3: Pull the core ComfyUI architecture safely into the workspace root
+# STEP 2: Pull pinned ComfyUI release
 ARG COMFYUI_VERSION=v0.27.0
 
-RUN git clone --depth 1 --branch ${COMFYUI_VERSION} https://github.com/comfyanonymous/ComfyUI.git . \
-    && python3 -m pip install --no-cache-dir -r requirements.txt
+RUN git clone --depth 1 --branch ${COMFYUI_VERSION} https://github.com/comfyanonymous/ComfyUI.git . && \
+    python3 -m pip install --no-cache-dir -r requirements.txt
 
-# STEP 4: Install the stable, core Python utility and monitoring pack
+# STEP 3: Core utilities and monitoring packages
 RUN python3 -m pip install --no-cache-dir \
-    GitPython py-cpuinfo toml pynvml color-matcher deepdiff piexif
+    GitPython \
+    py-cpuinfo \
+    toml \
+    nvidia-ml-py \
+    color-matcher \
+    deepdiff \
+    piexif
 
-# STEP 5: Install Vision, Modeling, and Face-Swap packages (Compiles Insightface safely)
-# Added 'peft', 'supervision', and 'glfw' to guarantee vision backend rendering works flawlessly
+# STEP 4: Vision, modeling, face, segmentation, and diffusion packages
 RUN python3 -m pip install --no-cache-dir \
-    gguf opencv-python imageio-ffmpeg PyWavelets matplotlib soundfile sentencepiece \
-    transformers accelerate av einops scikit-image onnxruntime-gpu peft supervision glfw \
-    ultralytics timm fvcore onnx safetensors facexlib basicsr insightface segment-anything \
-    open-clip-torch bitsandbytes>=0.46.1 kernels glitch_this mediapipe diffusers dynamicprompts
+    gguf \
+    opencv-python \
+    imageio-ffmpeg \
+    PyWavelets \
+    matplotlib \
+    soundfile \
+    sentencepiece \
+    transformers \
+    accelerate \
+    av \
+    einops \
+    scikit-image \
+    onnxruntime-gpu \
+    peft \
+    supervision \
+    glfw \
+    ultralytics \
+    timm \
+    fvcore \
+    onnx \
+    safetensors \
+    facexlib \
+    basicsr \
+    insightface \
+    segment-anything \
+    open-clip-torch \
+    'bitsandbytes>=0.46.1' \
+    kernels \
+    glitch_this \
+    mediapipe \
+    diffusers \
+    dynamicprompts \
+    tiktoken
 
-RUN python3 -m pip install --no-cache-dir sentencepiece tiktoken
-
-# STEP 6: Pre-install core audio signal processing math structures and document tools
-RUN python3 -m pip install --no-cache-dir scipy librosa pedalboard pyloudnorm noisereduce reportlab PyPDF2 PyMuPDF rotary_embedding_torch
-
-# STEP 7: Install specialized Cloud, Speech-to-Text, and Audio Production APIs cleanly
-# Added 'wikipedia', 'streamlit', 'neo4j', and 'websocket-client' to satisfy llm_party layouts natively
+# STEP 5: Audio, math, document, and utility packages
 RUN python3 -m pip install --no-cache-dir \
-    fal-client runwayml openai openai-whisper stable-audio-tools ollama gdown google-generativeai \
-    langchain-community langchain-openai markdownify neo4j docx2txt openpyxl pdfplumber xlrd \
-    wikipedia streamlit websocket-client
+    scipy \
+    librosa \
+    pedalboard \
+    pyloudnorm \
+    noisereduce \
+    demucs \
+    reportlab \
+    PyPDF2 \
+    PyMuPDF \
+    rotary_embedding_torch
 
-# STEP 8: Inject the specialized SAM2 tracking binaries directly from Facebook Research
-RUN python3 -m pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
+# STEP 6: Cloud, speech-to-text, LLM/API, and document helper packages
+RUN python3 -m pip install --no-cache-dir \
+    fal-client \
+    runwayml \
+    openai \
+    openai-whisper \
+    stable-audio-tools \
+    ollama \
+    gdown \
+    google-generativeai \
+    google-genai \
+    langchain-community \
+    langchain-openai \
+    markdownify \
+    neo4j \
+    docx2txt \
+    openpyxl \
+    pdfplumber \
+    xlrd \
+    wikipedia \
+    streamlit \
+    websocket-client
 
-# STEP 9: Inject the proprietary NVIDIA VFX bindings 
-RUN python3 -m pip install --no-cache-dir -U --no-build-isolation nvidia-vfx --index-url https://pypi.nvidia.com
+# STEP 7: SAM2
+RUN python3 -m pip install --no-cache-dir \
+    git+https://github.com/facebookresearch/sam2
 
-# STEP 10: Clear caching errors and enforce matched library specifications globally across core wheels
-RUN python3 -m pip install --no-cache-dir -U --force-reinstall numpy pandas scikit-learn PyWavelets
+# STEP 8: NVIDIA VFX bindings
+RUN python3 -m pip install --no-cache-dir --upgrade --no-build-isolation \
+    nvidia-vfx \
+    --index-url https://pypi.nvidia.com
 
-# STEP 11: Inject precompiled CUDA llama engines and patch the kernels validation bug across all module layers recursively
-RUN python3 -m pip install --no-cache-dir -U --force-reinstall llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 && \
-    python3 -c "import os; d='/usr/local/lib/python3.10/dist-packages/kernels'; [open(os.path.join(r,f),'w').write(open(os.path.join(r,f)).read().replace('raise ValueError(\"Either a revision or a version must be specified.\")', 'revision=\"main\"')) for r,_,fs in os.walk(d) for f in fs if f.endswith('.py')]"
+# STEP 9: Re-pin common numeric/data packages after large dependency installs
+RUN python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
+    numpy \
+    pandas \
+    scikit-learn \
+    PyWavelets
 
-# STEP 12: Inject a dummy module skeleton for flash_attn to force-bypass transformers entry guards safely
-RUN mkdir -p /usr/local/lib/python3.10/dist-packages/flash_attn && \
-    touch /usr/local/lib/python3.10/dist-packages/flash_attn/__init__.py
+# STEP 10: Clean install llama-cpp-python with CUDA support compiled for Ada / RTX 4070 Ti SUPER
+RUN python3 -m pip uninstall -y \
+        llama-cpp-python \
+        llama_cpp_python \
+        llama-cpp \
+        llama_cpp \
+        llama-cpp-py || true && \
+    CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=89" \
+    FORCE_CMAKE=1 \
+    python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
+        --no-binary=llama-cpp-python \
+        llama-cpp-python
+
+# STEP 11: Final sanity check for torch and llama
+RUN python3 - <<'PY'
+import torch
+import llama_cpp
+
+print("Torch:", torch.__version__)
+print("CUDA available:", torch.cuda.is_available())
+print("llama_cpp:", getattr(llama_cpp, "__version__", "unknown"))
+print("llama_cpp file:", llama_cpp.__file__)
+PY
 
 EXPOSE 8188
 
