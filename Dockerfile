@@ -109,7 +109,6 @@ RUN python3 -m pip install --no-cache-dir \
     segment-anything \
     open-clip-torch \
     'bitsandbytes>=0.46.1' \
-    kernels \
     glitch_this \
     mediapipe \
     diffusers \
@@ -180,17 +179,6 @@ RUN python3 -m pip uninstall -y \
     python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
         --no-binary=llama-cpp-python \
         llama-cpp-python
-
-# STEP 11: Final sanity check for torch and llama
-RUN python3 - <<'PY'
-import torch
-import llama_cpp
-
-print("Torch:", torch.__version__)
-print("CUDA available:", torch.cuda.is_available())
-print("llama_cpp:", getattr(llama_cpp, "__version__", "unknown"))
-print("llama_cpp file:", llama_cpp.__file__)
-PY
 
 EXPOSE 8188
 
