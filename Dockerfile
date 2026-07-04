@@ -36,7 +36,9 @@ WORKDIR /app/ComfyUI
 RUN python3 -m pip install --no-cache-dir uv
 
 # STEP 1: Fetch the optimized CUDA 12.6 core engine
-RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+RUN python3 -m pip install --no-cache-dir --upgrade \
+    torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
+    --index-url https://download.pytorch.org/whl/cu126
 
 # STEP 2: Pre-install mandatory compilation tools required by complex packages
 RUN python3 -m pip install --no-cache-dir setuptools wheel cython numpy
