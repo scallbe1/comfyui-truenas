@@ -42,7 +42,9 @@ RUN python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-u
 RUN python3 -m pip install --no-cache-dir setuptools wheel cython numpy
 
 # STEP 3: Pull the core ComfyUI architecture safely into the workspace root
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
+ARG COMFYUI_VERSION=v0.27.0
+
+RUN git clone --depth 1 --branch ${COMFYUI_VERSION} https://github.com/comfyanonymous/ComfyUI.git . \
     && python3 -m pip install --no-cache-dir -r requirements.txt
 
 # STEP 4: Install the stable, core Python utility and monitoring pack
