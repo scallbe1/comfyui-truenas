@@ -9,6 +9,14 @@ ENV CMAKE_BUILD_PARALLEL_LEVEL=4
 ENV FORCE_CMAKE=1
 ENV CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=89"
 
+# Persistent location inside the Docker image for Hugging Face models.
+# Do not mount an empty TrueNAS dataset over /opt/huggingface,
+# or it will hide the model stored in the image.
+ENV HF_HOME=/opt/huggingface
+ENV HF_HUB_CACHE=/opt/huggingface/hub
+ENV HF_HUB_DOWNLOAD_TIMEOUT=300
+ENV FASTER_WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
+
 # Install system utilities, Python, CUDA build tools, audio/vision libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -67,7 +75,8 @@ RUN python3 -m pip install --no-cache-dir --upgrade \
 # STEP 2: Pull pinned ComfyUI release
 ARG COMFYUI_VERSION=v0.27.0
 
-RUN git clone --depth 1 --branch ${COMFYUI_VERSION} https://github.com/comfyanonymous/ComfyUI.git . && \
+RUN git clone --depth 1 --branch ${COMFYUI_VERSION} \
+    https://github.com/comfyanonymous/ComfyUI.git . && \
     python3 -m pip install --no-cache-dir -r requirements.txt
 
 # STEP 3: Core utilities and monitoring packages
@@ -167,7 +176,8 @@ RUN python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
     scikit-learn \
     PyWavelets
 
-# STEP 10: Clean install llama-cpp-python with CUDA support compiled for Ada / RTX 4070 Ti SUPER
+# STEP 10: Clean install llama-cpp-python with CUDA support compiled
+# for Ada / RTX 4070 Ti SUPER
 RUN python3 -m pip uninstall -y \
         llama-cpp-python \
         llama_cpp_python \
@@ -179,6 +189,37 @@ RUN python3 -m pip uninstall -y \
     python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
         --no-binary=llama-cpp-python \
         llama-cpp-python
+
+# STEP 11: Install faster-whisper for SCMVM
+RUN python3 -m pip install --no-cache-dir \
+    faster-whisper \
+    huggingface-hub
+
+# STEP 12: Download the faster-whisper large-v3 model into the image
+#
+# SCMVM uses the model name "large-v3", which faster-whisper maps to:
+# Systran/faster-whisper-large-v3
+RUN mkdir -p "${HF_HUB_CACHE}" && \
+    python3 -c "import os; \
+from huggingface_hub import snapshot_download; \
+path = snapshot_download( \
+    repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'], \
+    cache_dir=os.environ['HF_HUB_CACHE'] \
+); \
+print('Downloaded faster-whisper model to:', path)"
+
+# STEP 13: Verify faster-whisper and confirm the model exists locally
+RUN python3 -c "import os; \
+from faster_whisper import WhisperModel; \
+from huggingface_hub import snapshot_download; \
+path = snapshot_download( \
+    repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'], \
+    cache_dir=os.environ['HF_HUB_CACHE'], \
+    local_files_only=True \
+); \
+print('faster-whisper import successful'); \
+print('Verified local model:', path)" && \
+    chmod -R a+rX "${HF_HOME}"
 
 EXPOSE 8188
 
