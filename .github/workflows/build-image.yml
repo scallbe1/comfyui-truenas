@@ -1,53 +1,52 @@
-name: Build and Publish ComfyUI Image
+name: Build ComfyUI TrueNAS image
 
 on:
   push:
     branches:
       - main
+    paths:
+      - Dockerfile
+      - .github/workflows/build-image.yml
+
   workflow_dispatch:
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" # Forces GitHub to run actions securely on modern Node 24
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log into GitHub Container Registry
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Metadata (Tags/Labels)
+      - name: Generate image tags
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest
-            type=raw,value=v1.0
-            type=sha,format=short
+            type=sha,prefix=
 
-      - name: Build and Push Docker Image
+      - name: Build and publish image
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
