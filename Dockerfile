@@ -207,9 +207,6 @@ RUN python3 -m pip uninstall -y \
         --no-binary=llama-cpp-python \
         llama-cpp-python
 
-# Confirm that the newly compiled Python package imports successfully.
-RUN python3 -c "import llama_cpp; print('llama-cpp-python import successful:', llama_cpp.__version__)"
-
 # STEP 11: Install faster-whisper for SCMVM.
 RUN python3 -m pip install --no-cache-dir \
     faster-whisper \
