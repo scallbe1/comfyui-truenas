@@ -286,22 +286,29 @@ path = snapshot_download(
 print('Downloaded faster-whisper model to:', path)
 PY
 
-# Build-time verification. GPU availability itself is checked only when the
-# container runs because Docker builds normally have no GPU attached.
+# Build-time verification. Do not import llama_cpp here: its CUDA-enabled
+# shared library requires libcuda.so.1, which the NVIDIA container runtime
+# injects from the TrueNAS host only when the container is launched with a GPU.
 RUN python3 - <<'PY'
 import os
-import torch
-import torchvision
-import torchaudio
-import onnxruntime
+from importlib.metadata import version
+from pathlib import Path
+
 import ctranslate2
-import llama_cpp
+import numpy as np
+import onnxruntime
+import torch
+import torchaudio
+import torchvision
 from huggingface_hub import snapshot_download
 
 assert torch.version.cuda == '13.0', torch.version.cuda
 assert onnxruntime.__version__.startswith('1.28.'), onnxruntime.__version__
-import numpy as np
 assert tuple(int(part) for part in np.__version__.split('.')[:2]) < (2, 5), np.__version__
+
+llama_version = version('llama-cpp-python')
+llama_library = Path('/usr/local/lib/python3.12/dist-packages/llama_cpp/lib/libllama.so')
+assert llama_library.is_file(), f'Missing llama.cpp shared library: {llama_library}'
 
 model_path = snapshot_download(
     repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'],
@@ -316,10 +323,10 @@ print('PyTorch CUDA build:', torch.version.cuda)
 print('ONNX Runtime:', onnxruntime.__version__)
 print('ONNX providers compiled in:', onnxruntime.get_available_providers())
 print('CTranslate2:', ctranslate2.__version__)
-print('llama-cpp-python import: successful')
+print('llama-cpp-python:', llama_version)
+print('Verified llama.cpp library:', llama_library)
 print('Verified faster-whisper model:', model_path)
 PY
-
 RUN chmod -R a+rX "${HF_HOME}"
 
 EXPOSE 8188
