@@ -1,30 +1,49 @@
-FROM nvidia/cuda:12.6.0-devel-ubuntu22.04
+FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PIP_BREAK_SYSTEM_PACKAGES=1
-ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-# Build llama.cpp CUDA kernels for all RTX 30- and 40-series GPUs.
-# RTX 30-series: compute capability 8.6
-# RTX 40-series: compute capability 8.9
-ENV CMAKE_BUILD_PARALLEL_LEVEL=4
-ENV FORCE_CMAKE=1
-ENV CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=86;89"
+# CUDA build/runtime paths.
+ENV CUDA_HOME=/usr/local/cuda \
+    CUDACXX=/usr/local/cuda/bin/nvcc \
+    PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 
-# Persistent location inside the Docker image for Hugging Face models.
-# Do not mount an empty TrueNAS dataset over /opt/huggingface,
-# or it will hide the model stored in the image.
-ENV HF_HOME=/opt/huggingface
-ENV HF_HUB_CACHE=/opt/huggingface/hub
-ENV HF_HUB_DOWNLOAD_TIMEOUT=300
-ENV FASTER_WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
+# Build CUDA kernels for RTX 30-series (sm_86) and RTX 40-series (sm_89).
+ENV CMAKE_BUILD_PARALLEL_LEVEL=4 \
+    MAX_JOBS=4 \
+    FORCE_CMAKE=1 \
+    TORCH_CUDA_ARCH_LIST="8.6;8.9" \
+    CMAKE_ARGS="-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86;89"
 
-# Install system utilities, Python, CUDA build tools, and audio/vision libraries.
+# Persistent location inside the image for Hugging Face models.
+# Do not mount an empty dataset over /opt/huggingface or it will hide
+# the model downloaded into the image during the build.
+ENV HF_HOME=/opt/huggingface \
+    HF_HUB_CACHE=/opt/huggingface/hub \
+    HF_HUB_DOWNLOAD_TIMEOUT=300 \
+    FASTER_WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
+
+ARG COMFYUI_VERSION=v0.30.0
+ARG TORCH_VERSION=2.11.0
+ARG TORCHVISION_VERSION=0.26.0
+ARG TORCHAUDIO_VERSION=2.11.0
+ARG ONNXRUNTIME_VERSION=1.28.0
+ARG LLAMA_CPP_PYTHON_VERSION=0.3.34
+
+# System tools, Python, build dependencies, audio libraries, and vision libraries.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    ca-certificates \
+    curl \
+    wget \
     python3 \
     python3-pip \
     python3-dev \
+    python3-venv \
     python-is-python3 \
     ffmpeg \
     libgl1 \
@@ -38,21 +57,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     ninja-build \
     pkg-config \
+    gfortran \
+    rustc \
+    cargo \
+    libopenblas-dev \
+    liblapack-dev \
+    libjpeg-dev \
+    libpng-dev \
+    zlib1g-dev \
     libsndfile1 \
+    libsndfile1-dev \
     portaudio19-dev \
     libasound2-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Normalize Python and pip paths.
-RUN ln -sf /usr/bin/pip3 /usr/bin/pip && \
-    ln -sf /usr/bin/python3 /usr/bin/python && \
-    mkdir -p /usr/local/bin && \
+# Normalize Python and pip paths and allow system-Python package installation.
+RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
     ln -sf /usr/bin/pip3 /usr/local/bin/pip && \
-    ln -sf /usr/bin/python3 /usr/local/bin/python
-
-# Allow pip installations into the system Python used by this container.
-RUN mkdir -p /etc && \
     printf '%s\n' \
         '[global]' \
         'break-system-packages = true' \
@@ -60,30 +82,28 @@ RUN mkdir -p /etc && \
 
 WORKDIR /app/ComfyUI
 
-# Upgrade base Python tooling.
+# Base Python tooling.
 RUN python3 -m pip install --no-cache-dir --upgrade \
     pip \
     setuptools \
     wheel \
     cython \
     uv \
-    numpy
+    "numpy==1.26.4"
 
-# STEP 1: Install PyTorch CUDA 12.6.
-RUN python3 -m pip install --no-cache-dir --upgrade \
-    torch==2.11.0 \
-    torchvision==0.26.0 \
-    torchaudio==2.11.0 \
-    --index-url https://download.pytorch.org/whl/cu126
+# PyTorch CUDA 13.0 stack. Keep these three versions as a matched set.
+RUN python3 -m pip install --no-cache-dir \
+    "torch==${TORCH_VERSION}" \
+    "torchvision==${TORCHVISION_VERSION}" \
+    "torchaudio==${TORCHAUDIO_VERSION}" \
+    --index-url https://download.pytorch.org/whl/cu130
 
-# STEP 2: Pull the pinned ComfyUI release.
-ARG COMFYUI_VERSION=v0.27.0
-
+# Pull the pinned ComfyUI release and install its dependencies.
 RUN git clone --depth 1 --branch "${COMFYUI_VERSION}" \
-        https://github.com/comfyanonymous/ComfyUI.git . && \
+        https://github.com/Comfy-Org/ComfyUI.git . && \
     python3 -m pip install --no-cache-dir -r requirements.txt
 
-# STEP 3: Core utilities and monitoring packages.
+# Core utilities and monitoring packages.
 RUN python3 -m pip install --no-cache-dir \
     GitPython \
     py-cpuinfo \
@@ -93,7 +113,7 @@ RUN python3 -m pip install --no-cache-dir \
     deepdiff \
     piexif
 
-# STEP 4: Vision, modeling, face, segmentation, and diffusion packages.
+# Vision, modeling, face, segmentation, diffusion, and GPU inference packages.
 RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python \
@@ -107,7 +127,7 @@ RUN python3 -m pip install --no-cache-dir \
     av \
     einops \
     scikit-image \
-    onnxruntime-gpu \
+    "onnxruntime-gpu==${ONNXRUNTIME_VERSION}" \
     peft \
     supervision \
     glfw \
@@ -121,14 +141,14 @@ RUN python3 -m pip install --no-cache-dir \
     insightface \
     segment-anything \
     open-clip-torch \
-    'bitsandbytes>=0.46.1' \
+    "bitsandbytes>=0.50.0" \
     glitch_this \
     mediapipe \
     diffusers \
     dynamicprompts \
     tiktoken
 
-# STEP 5: Audio, math, document, and utility packages.
+# Audio, math, document, and utility packages.
 RUN python3 -m pip install --no-cache-dir \
     scipy \
     librosa \
@@ -141,7 +161,7 @@ RUN python3 -m pip install --no-cache-dir \
     PyMuPDF \
     rotary_embedding_torch
 
-# STEP 6: Cloud, speech-to-text, LLM/API, and document helper packages.
+# Cloud, speech-to-text, LLM/API, and document helper packages.
 RUN python3 -m pip install --no-cache-dir \
     fal-client \
     runwayml \
@@ -164,80 +184,134 @@ RUN python3 -m pip install --no-cache-dir \
     streamlit \
     websocket-client
 
-# STEP 7: SAM2.
+# SAM2.
 RUN python3 -m pip install --no-cache-dir \
-    git+https://github.com/facebookresearch/sam2
+    git+https://github.com/facebookresearch/sam2.git
 
-# STEP 8: NVIDIA VFX bindings.
-RUN python3 -m pip install \
-    --no-cache-dir \
-    --upgrade \
-    --no-build-isolation \
-    nvidia-vfx \
-    --index-url https://pypi.nvidia.com
+# NVIDIA Video Effects SDK Python bindings.
+RUN python3 -m pip install --no-cache-dir --upgrade \
+    --extra-index-url https://pypi.nvidia.com \
+    nvidia-vfx
 
-# STEP 9: Re-pin common numeric and data packages after large dependency installs.
-RUN python3 -m pip install \
-    --no-cache-dir \
-    --upgrade \
-    --force-reinstall \
-    numpy \
-    pandas \
-    scikit-learn \
+# Re-pin common numeric/data packages after broad dependency installation.
+RUN python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
+    "numpy==1.26.4" \
+    "pandas<3" \
+    "scikit-learn<2" \
     PyWavelets
 
-# STEP 10: Clean-build llama-cpp-python with CUDA support.
-#
-# CMAKE_ARGS is defined globally above and compiles kernels for:
-#   sm_86: all RTX 30-series GPUs
-#   sm_89: all RTX 40-series GPUs
-#
-# --no-binary forces a local source build instead of installing a cached
-# or precompiled wheel made for a different CUDA architecture.
+# Re-pin the CUDA 13.0 PyTorch stack in case another package attempted
+# to replace it with a CPU or different-CUDA build.
+RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
+    "torch==${TORCH_VERSION}" \
+    "torchvision==${TORCHVISION_VERSION}" \
+    "torchaudio==${TORCHAUDIO_VERSION}" \
+    --index-url https://download.pytorch.org/whl/cu130
+
+# Clean-build llama-cpp-python against CUDA 13.
 RUN python3 -m pip uninstall -y \
         llama-cpp-python \
         llama_cpp_python \
         llama-cpp \
         llama_cpp \
         llama-cpp-py || true && \
-    python3 -m pip install \
-        --no-cache-dir \
-        --upgrade \
-        --force-reinstall \
+    python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
         --no-binary=llama-cpp-python \
-        llama-cpp-python
+        "llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}"
 
-# STEP 11: Install faster-whisper for SCMVM.
+# faster-whisper currently uses CTranslate2 CUDA 12 binaries.
+# Install its required CUDA 12 libraries alongside the CUDA 13 stack.
 RUN python3 -m pip install --no-cache-dir \
     faster-whisper \
-    huggingface-hub
+    huggingface-hub \
+    nvidia-cublas-cu12 \
+    "nvidia-cudnn-cu12==9.*"
 
-# STEP 12: Download faster-whisper large-v3 into the image.
-#
-# SCMVM uses the model name "large-v3", which faster-whisper maps to:
-# Systran/faster-whisper-large-v3
+# Register the CUDA 12 library directories used by CTranslate2.
+RUN python3 - <<'PY'
+import os
+import nvidia.cublas.lib
+import nvidia.cudnn.lib
+
+paths = [
+    os.path.dirname(nvidia.cublas.lib.__file__),
+    os.path.dirname(nvidia.cudnn.lib.__file__),
+]
+
+with open(
+    "/etc/ld.so.conf.d/ctranslate2-cu12.conf",
+    "w",
+    encoding="utf-8",
+) as file:
+    for path in paths:
+        file.write(path + "\n")
+
+print("Registered CTranslate2 CUDA 12 libraries:")
+for path in paths:
+    print(path)
+PY
+
+RUN ldconfig
+
+# Download faster-whisper large-v3 into the image.
 RUN mkdir -p "${HF_HUB_CACHE}" && \
-    python3 -c "import os; \
-from huggingface_hub import snapshot_download; \
-path = snapshot_download( \
-    repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'], \
-    cache_dir=os.environ['HF_HUB_CACHE'] \
-); \
-print('Downloaded faster-whisper model to:', path)"
+    python3 - <<'PY'
+import os
+from huggingface_hub import snapshot_download
 
-# STEP 13: Verify faster-whisper and confirm the model exists locally.
-RUN python3 -c "import os; \
-from faster_whisper import WhisperModel; \
-from huggingface_hub import snapshot_download; \
-path = snapshot_download( \
-    repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'], \
-    cache_dir=os.environ['HF_HUB_CACHE'], \
-    local_files_only=True \
-); \
-print('faster-whisper import successful'); \
-print('Verified local model:', path)" && \
-    chmod -R a+rX "${HF_HOME}"
+path = snapshot_download(
+    repo_id=os.environ["FASTER_WHISPER_MODEL_REPO"],
+    cache_dir=os.environ["HF_HUB_CACHE"],
+)
+
+print("Downloaded faster-whisper model to:", path)
+PY
+
+# Build-time verification.
+# GPU availability is checked at runtime because normal Docker builds
+# do not have access to the GPU.
+RUN python3 - <<'PY'
+import os
+import torch
+import torchvision
+import torchaudio
+import onnxruntime
+import ctranslate2
+import llama_cpp
+from huggingface_hub import snapshot_download
+
+assert torch.version.cuda == "13.0", torch.version.cuda
+assert onnxruntime.__version__.startswith("1.28."), onnxruntime.__version__
+
+model_path = snapshot_download(
+    repo_id=os.environ["FASTER_WHISPER_MODEL_REPO"],
+    cache_dir=os.environ["HF_HUB_CACHE"],
+    local_files_only=True,
+)
+
+print("PyTorch:", torch.__version__)
+print("Torchvision:", torchvision.__version__)
+print("Torchaudio:", torchaudio.__version__)
+print("PyTorch CUDA build:", torch.version.cuda)
+print("ONNX Runtime:", onnxruntime.__version__)
+print("ONNX providers compiled in:", onnxruntime.get_available_providers())
+print("CTranslate2:", ctranslate2.__version__)
+print("llama-cpp-python import: successful")
+print("Verified faster-whisper model:", model_path)
+PY
+
+RUN chmod -R a+rX "${HF_HOME}"
 
 EXPOSE 8188
 
-CMD ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188"]
+# Dynamic VRAM and NVIDIA asynchronous offload are normally enabled
+# automatically. This flag makes Dynamic VRAM explicit.
+CMD [
+    "python3",
+    "main.py",
+    "--listen",
+    "0.0.0.0",
+    "--port",
+    "8188",
+    "--enable-dynamic-vram"
+]
