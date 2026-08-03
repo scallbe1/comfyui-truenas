@@ -213,7 +213,13 @@ RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# Clean-build llama-cpp-python against the CUDA 13 toolkit in this image.
+# Install llama-cpp-python's runtime dependencies explicitly, then build it
+# against CUDA 13 without allowing pip to replace NumPy or other shared packages.
+RUN python3 -m pip install --no-cache-dir \
+    "diskcache>=5.6.1" \
+    "jinja2>=2.11.3" \
+    "typing-extensions>=4.5.0"
+
 RUN python3 -m pip uninstall -y \
         llama-cpp-python \
         llama_cpp_python \
@@ -221,6 +227,7 @@ RUN python3 -m pip uninstall -y \
         llama_cpp \
         llama-cpp-py || true && \
     python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
+        --no-deps \
         --no-binary=llama-cpp-python \
         "llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}"
 
@@ -232,21 +239,33 @@ RUN python3 -m pip install --no-cache-dir \
     nvidia-cublas-cu12 \
     "nvidia-cudnn-cu12==9.*"
 
-# Register the CUDA 12 library directories used by CTranslate2 without
-# replacing the primary CUDA 13 toolkit paths used by PyTorch and ComfyUI.
+# Register the CUDA 12 library directories used by CTranslate2. The nvidia.*
+# packages are namespace packages, so their module __file__ values may be None.
+# Locate the actual library directories through their package search paths.
 RUN python3 - <<'PY'
 import os
-import nvidia.cublas.lib
-import nvidia.cudnn.lib
+from importlib.util import find_spec
 
-paths = [
-    os.path.dirname(nvidia.cublas.lib.__file__),
-    os.path.dirname(nvidia.cudnn.lib.__file__),
-]
+paths = []
+for package in ('nvidia.cublas', 'nvidia.cudnn'):
+    spec = find_spec(package)
+    if spec is None or not spec.submodule_search_locations:
+        raise RuntimeError(f'Could not locate {package}')
 
-with open('/etc/ld.so.conf.d/ctranslate2-cu12.conf', 'w', encoding='utf-8') as f:
+    found = False
+    for package_dir in spec.submodule_search_locations:
+        library_dir = os.path.join(package_dir, 'lib')
+        if os.path.isdir(library_dir):
+            paths.append(library_dir)
+            found = True
+
+    if not found:
+        raise RuntimeError(f'Could not locate the lib directory for {package}')
+
+paths = sorted(set(paths))
+with open('/etc/ld.so.conf.d/ctranslate2-cu12.conf', 'w', encoding='utf-8') as file:
     for path in paths:
-        f.write(path + '\n')
+        file.write(path + '\n')
 
 print('Registered CTranslate2 CUDA 12 libraries:')
 for path in paths:
@@ -281,6 +300,8 @@ from huggingface_hub import snapshot_download
 
 assert torch.version.cuda == '13.0', torch.version.cuda
 assert onnxruntime.__version__.startswith('1.28.'), onnxruntime.__version__
+import numpy as np
+assert tuple(int(part) for part in np.__version__.split('.')[:2]) < (2, 5), np.__version__
 
 model_path = snapshot_download(
     repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'],
