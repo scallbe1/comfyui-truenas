@@ -5,8 +5,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_ROOT_USER_ACTION=ignore \
     PIP_DEFAULT_TIMEOUT=300 \
     PIP_RETRIES=10 \
+    UV_BREAK_SYSTEM_PACKAGES=true \
+    UV_SYSTEM_PYTHON=true \
+    UV_NO_PROGRESS=true \
+    UV_CONFIG_FILE=/etc/uv/uv.toml \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONWARNINGS=ignore::FutureWarning,ignore::SyntaxWarning \
+    XDG_CONFIG_HOME=/app/ComfyUI/user/.config \
+    YOLO_CONFIG_DIR=/app/ComfyUI/user/.config/Ultralytics \
+    MPLCONFIGDIR=/app/ComfyUI/user/.cache/matplotlib \
+    CHROME_BIN=/usr/bin/google-chrome
 
 # CUDA build/runtime paths.
 ENV CUDA_HOME=/usr/local/cuda \
@@ -66,6 +75,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev \
     libpng-dev \
     zlib1g-dev \
+    libraw-dev \
+    libopenexr-dev \
+    libimath-dev \
+    libegl1 \
+    libgles2 \
+    rsync \
     libsndfile1 \
     libsndfile1-dev \
     portaudio19-dev \
@@ -80,7 +95,23 @@ RUN printf '%s\n' \
         'break-system-packages = true' \
         'timeout = 300' \
         'retries = 10' \
-        > /etc/pip.conf
+        > /etc/pip.conf && \
+    mkdir -p /etc/uv && \
+    printf '%s\n' \
+        '[pip]' \
+        'system = true' \
+        'break-system-packages = true' \
+        > /etc/uv/uv.toml && \
+    printf '%s\n' \
+        'numpy==1.26.4' \
+        'torch==2.11.0' \
+        'torchvision==0.26.0' \
+        'torchaudio==2.11.0' \
+        'onnxruntime-gpu==1.28.0' \
+        > /opt/pip-constraints.txt
+
+ENV PIP_CONSTRAINT=/opt/pip-constraints.txt \
+    UV_CONSTRAINT=/opt/pip-constraints.txt
 
 WORKDIR /app/ComfyUI
 
@@ -110,12 +141,21 @@ RUN git clone --depth 1 --branch "${COMFYUI_VERSION}" \
 # Core utilities and monitoring packages.
 RUN python3 -m pip install --no-cache-dir \
     GitPython \
+    dill \
     py-cpuinfo \
     toml \
     nvidia-ml-py \
     color-matcher \
     deepdiff \
-    piexif
+    piexif \
+    requirements-parser \
+    rich \
+    rich-argparse \
+    cachetools \
+    qrcode[pil] \
+    google-cloud-storage \
+    PyOpenGL \
+    PyOpenGL-accelerate
 
 # Vision, modeling, face, segmentation, diffusion, and GPU inference packages.
 RUN python3 -m pip install --no-cache-dir \
@@ -149,6 +189,8 @@ RUN python3 -m pip install --no-cache-dir \
     glitch_this \
     mediapipe \
     diffusers \
+    kornia \
+    "ninja~=1.11.1.4" \
     dynamicprompts \
     tiktoken
 
@@ -189,6 +231,56 @@ RUN python3 -m pip install --no-cache-dir \
     streamlit \
     websocket-client
 
+# Dependencies reported missing by the mounted custom-node collection.
+# EasyOCR and rembg are installed without dependencies so they reuse the existing
+# CUDA PyTorch, ONNX Runtime GPU, OpenCV, NumPy, SciPy and image stack.
+RUN python3 -m pip install --no-cache-dir \
+    python-bidi \
+    PyYAML \
+    Shapely \
+    pyclipper \
+    jsonschema \
+    pooch \
+    pymatting \
+    lark \
+    deep-translator \
+    googletrans-py \
+    "argostranslate==1.9.6" \
+    "stanza==1.10.1" \
+    sacremoses \
+    spacy \
+    html2image==2.0.3 \
+    srt \
+    pydub \
+    ffmpeg-python \
+    "py-cord[voice]" \
+    llama-index \
+    feedparser \
+    selenium \
+    mdtex2html \
+    keyboard \
+    "moviepy==1.0.3" \
+    sounddevice \
+    "colour-science==0.4.6" \
+    "rawpy==0.25.1" \
+    "OpenEXR==3.4.12"
+
+RUN python3 -m pip install --no-cache-dir --no-deps \
+    easyocr \
+    "rembg==2.0.67"
+
+# Bake the multilingual sentence splitter used by AlekPet translation nodes.
+RUN python3 -m spacy download xx_sent_ud_sm
+
+# Install Chrome so html2image and Selenium nodes have an actual browser.
+RUN wget -q -O /tmp/google-chrome.deb \
+        https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends /tmp/google-chrome.deb && \
+    rm -f /tmp/google-chrome.deb && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 # SAM2.
 RUN python3 -m pip install --no-cache-dir \
     git+https://github.com/facebookresearch/sam2.git
@@ -212,6 +304,39 @@ RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
     "torchvision==${TORCHVISION_VERSION}" \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
+
+# CUDA 13 xFormers wheel. xFormers 0.0.34+ uses the stable PyTorch ABI for
+# PyTorch 2.10 and later, so the wheel is compatible with PyTorch 2.11.
+RUN python3 -m pip install --no-cache-dir --no-deps \
+    "xformers==0.0.35" \
+    --index-url https://download.pytorch.org/whl/cu130
+
+# SageAttention V1 is Triton based and supports Ampere without compiling a
+# GPU-specific extension during the image build.
+RUN python3 -m pip install --no-cache-dir --no-deps \
+    "sageattention==1.0.6"
+
+# Build NVIDIA Apex with its C++ and CUDA extensions so fused LayerNorm is
+# actually available instead of merely installing the Python-only package.
+ARG APEX_REF=master
+RUN git clone --depth 1 --branch "${APEX_REF}" https://github.com/NVIDIA/apex.git /tmp/apex && \
+    cd /tmp/apex && \
+    NVCC_APPEND_FLAGS="--threads 4" \
+    APEX_PARALLEL_BUILD=4 \
+    APEX_CPP_EXT=1 \
+    APEX_CUDA_EXT=1 \
+    python3 -m pip install --no-cache-dir -v --no-build-isolation --no-deps . && \
+    rm -rf /tmp/apex
+
+# Keep a current LTXVideo custom-node overlay in the image. The actual
+# custom_nodes directory is mounted from TrueNAS, so the entrypoint applies
+# this compatible copy at container startup.
+ARG LTXVIDEO_REF=master
+RUN git clone --depth 1 --branch "${LTXVIDEO_REF}" \
+        https://github.com/Lightricks/ComfyUI-LTXVideo.git \
+        /opt/custom-node-overlays/ComfyUI-LTXVideo && \
+    python3 -m pip install --no-cache-dir \
+        -r /opt/custom-node-overlays/ComfyUI-LTXVideo/requirements.txt
 
 # Install llama-cpp-python's runtime dependencies explicitly, then build it
 # against CUDA 13 without allowing pip to replace NumPy or other shared packages.
@@ -286,10 +411,10 @@ path = snapshot_download(
 print('Downloaded faster-whisper model to:', path)
 PY
 
-# Build-time verification. Do not import llama_cpp here: its CUDA-enabled
-# shared library requires libcuda.so.1, which the NVIDIA container runtime
-# injects from the TrueNAS host only when the container is launched with a GPU.
-RUN python3 - <<'PY'
+# Build-time verification. GPU-linked extensions are checked by package and
+# shared-library presence because libcuda.so.1 is injected only at runtime.
+RUN python3 - <<'PYVERIFY'
+import importlib.util
 import os
 from importlib.metadata import version
 from pathlib import Path
@@ -304,9 +429,19 @@ from huggingface_hub import snapshot_download
 
 assert torch.version.cuda == '13.0', torch.version.cuda
 assert onnxruntime.__version__.startswith('1.28.'), onnxruntime.__version__
-assert tuple(int(part) for part in np.__version__.split('.')[:2]) < (2, 5), np.__version__
+assert np.__version__ == '1.26.4', np.__version__
 
-llama_version = version('llama-cpp-python')
+required_modules = [
+    'OpenEXR', 'OpenGL_accelerate', 'colour', 'dill', 'easyocr', 'feedparser',
+    'ffmpeg', 'google.cloud.storage', 'html2image', 'keyboard', 'llama_index',
+    'mdtex2html', 'moviepy', 'pydub', 'rawpy', 'rembg', 'selenium', 'srt',
+]
+missing = [name for name in required_modules if importlib.util.find_spec(name) is None]
+assert not missing, f'Missing required modules: {missing}'
+
+for distribution in ('xformers', 'sageattention', 'apex', 'llama-cpp-python'):
+    print(distribution + ':', version(distribution))
+
 llama_library = Path('/usr/local/lib/python3.12/dist-packages/llama_cpp/lib/libllama.so')
 assert llama_library.is_file(), f'Missing llama.cpp shared library: {llama_library}'
 
@@ -323,14 +458,55 @@ print('PyTorch CUDA build:', torch.version.cuda)
 print('ONNX Runtime:', onnxruntime.__version__)
 print('ONNX providers compiled in:', onnxruntime.get_available_providers())
 print('CTranslate2:', ctranslate2.__version__)
-print('llama-cpp-python:', llama_version)
 print('Verified llama.cpp library:', llama_library)
 print('Verified faster-whisper model:', model_path)
-PY
-RUN chmod -R a+rX "${HF_HOME}"
+PYVERIFY
+RUN chmod -R a+rX "${HF_HOME}" /opt/custom-node-overlays
+
+# Runtime initialization fixes configuration stored in mounted TrueNAS datasets.
+RUN cat > /usr/local/bin/comfyui-entrypoint <<'SHENTRY'
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p \
+    "${YOLO_CONFIG_DIR}" \
+    "${MPLCONFIGDIR}" \
+    /app/ComfyUI/user/backups
+
+# Replace the stale mounted LTXVideo custom node with the current compatible
+# copy. Create a one-time backup before the first replacement.
+LTX_SOURCE=/opt/custom-node-overlays/ComfyUI-LTXVideo
+LTX_TARGET=/app/ComfyUI/custom_nodes/ComfyUI-LTXVideo
+LTX_BACKUP=/app/ComfyUI/user/backups/ComfyUI-LTXVideo-before-v0.30.0.tar.gz
+if [[ -d "${LTX_TARGET}" && -d "${LTX_SOURCE}" ]]; then
+    if [[ ! -f "${LTX_BACKUP}" ]]; then
+        tar -czf "${LTX_BACKUP}" -C "$(dirname "${LTX_TARGET}")" "$(basename "${LTX_TARGET}")"
+    fi
+    rsync -a --delete --exclude='.git/' "${LTX_SOURCE}/" "${LTX_TARGET}/"
+    find "${LTX_TARGET}" -type d -name __pycache__ -prune -exec rm -rf {} +
+fi
+
+# Point WAS Node Suite at the system ffmpeg binary without discarding its
+# existing configuration.
+python3 - <<'PYWAS'
+import json
+from pathlib import Path
+
+path = Path('/app/ComfyUI/custom_nodes/was-ns/was_suite_config.json')
+if path.parent.is_dir():
+    try:
+        data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        data = {}
+    data['ffmpeg_bin_path'] = '/usr/bin/ffmpeg'
+    path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+PYWAS
+
+cd /app/ComfyUI
+exec python3 main.py "$@"
+SHENTRY
+RUN chmod +x /usr/local/bin/comfyui-entrypoint
 
 EXPOSE 8188
-
-# Dynamic VRAM and NVIDIA async offload are normally enabled automatically;
-# --enable-dynamic-vram makes the intended configuration explicit.
-CMD ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram"]
+ENTRYPOINT ["/usr/local/bin/comfyui-entrypoint"]
+CMD ["--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram"]
