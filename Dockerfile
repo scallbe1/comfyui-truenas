@@ -23,12 +23,14 @@ ENV CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 
-# Build CUDA kernels for RTX 30-series (sm_86) and RTX 40-series (sm_89).
-ENV CMAKE_BUILD_PARALLEL_LEVEL=4 \
-    MAX_JOBS=4 \
+# Limit compiler parallelism for GitHub-hosted runners while producing a
+# portable CUDA build for RTX 3090 (SM 8.6), RTX 4090 (SM 8.9), and
+# RTX 5090-class Blackwell GPUs (SM 12.0).
+ENV CMAKE_BUILD_PARALLEL_LEVEL=2 \
+    MAX_JOBS=2 \
     FORCE_CMAKE=1 \
-    TORCH_CUDA_ARCH_LIST="8.6;8.9" \
-    CMAKE_ARGS="-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86;89"
+    TORCH_CUDA_ARCH_LIST="8.6;8.9;12.0" \
+    CMAKE_ARGS="-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86;89;120"
 
 # Persistent location inside the image for Hugging Face models.
 # Do not mount an empty dataset over /opt/huggingface or it will hide
@@ -146,6 +148,7 @@ RUN python3 -m pip install --no-cache-dir \
     toml \
     nvidia-ml-py \
     color-matcher \
+    chardet==5.2.0 \
     deepdiff \
     piexif \
     requirements-parser \
@@ -160,7 +163,7 @@ RUN python3 -m pip install --no-cache-dir \
 # Vision, modeling, face, segmentation, diffusion, and GPU inference packages.
 RUN python3 -m pip install --no-cache-dir \
     gguf \
-    opencv-python \
+    opencv-python-headless \
     imageio-ffmpeg \
     PyWavelets \
     matplotlib \
@@ -233,7 +236,7 @@ RUN python3 -m pip install --no-cache-dir \
 
 # Dependencies reported missing by the mounted custom-node collection.
 # EasyOCR and rembg are installed without dependencies so they reuse the existing
-# CUDA PyTorch, ONNX Runtime GPU, OpenCV, NumPy, SciPy and image stack.
+# CUDA PyTorch, ONNX Runtime GPU, headless OpenCV, NumPy, SciPy and image stack.
 RUN python3 -m pip install --no-cache-dir \
     python-bidi \
     PyYAML \
@@ -316,17 +319,10 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
 RUN python3 -m pip install --no-cache-dir --no-deps \
     "sageattention==1.0.6"
 
-# Build NVIDIA Apex with its C++ and CUDA extensions so fused LayerNorm is
-# actually available instead of merely installing the Python-only package.
-ARG APEX_REF=master
-RUN git clone --depth 1 --branch "${APEX_REF}" https://github.com/NVIDIA/apex.git /tmp/apex && \
-    cd /tmp/apex && \
-    NVCC_APPEND_FLAGS="--threads 4" \
-    APEX_PARALLEL_BUILD=4 \
-    APEX_CPP_EXT=1 \
-    APEX_CUDA_EXT=1 \
-    python3 -m pip install --no-cache-dir -v --no-build-isolation --no-deps . && \
-    rm -rf /tmp/apex
+# NVIDIA Apex is intentionally omitted. ComfyUI inference uses PyTorch and
+# xFormers directly, and nodes that optionally support Apex fall back to
+# standard PyTorch normalization. Removing Apex avoids the largest and most
+# memory-intensive CUDA compilation step in GitHub Actions.
 
 # Keep a current LTXVideo custom-node overlay in the image. The actual
 # custom_nodes directory is mounted from TrueNAS, so the entrypoint applies
@@ -339,7 +335,10 @@ RUN git clone --depth 1 --branch "${LTXVIDEO_REF}" \
         -r /opt/custom-node-overlays/ComfyUI-LTXVideo/requirements.txt
 
 # Install llama-cpp-python's runtime dependencies explicitly, then build it
-# against CUDA 13 without allowing pip to replace NumPy or other shared packages.
+# once against CUDA 13 for SM 8.6, 8.9, and 12.0. The upstream project does
+# not publish a CUDA 13 wheel, so source compilation is required for GPU offload.
+# This is much smaller than the removed Apex build. Do not allow pip to replace
+# NumPy or other shared packages.
 RUN python3 -m pip install --no-cache-dir \
     "diskcache>=5.6.1" \
     "jinja2>=2.11.3" \
@@ -432,14 +431,17 @@ assert onnxruntime.__version__.startswith('1.28.'), onnxruntime.__version__
 assert np.__version__ == '1.26.4', np.__version__
 
 required_modules = [
-    'OpenEXR', 'OpenGL_accelerate', 'colour', 'dill', 'easyocr', 'feedparser',
+    'OpenEXR', 'OpenGL_accelerate', 'chardet', 'colour', 'cv2', 'dill', 'easyocr', 'feedparser',
     'ffmpeg', 'google.cloud.storage', 'html2image', 'keyboard', 'llama_index',
     'mdtex2html', 'moviepy', 'pydub', 'rawpy', 'rembg', 'selenium', 'srt',
 ]
 missing = [name for name in required_modules if importlib.util.find_spec(name) is None]
 assert not missing, f'Missing required modules: {missing}'
 
-for distribution in ('xformers', 'sageattention', 'apex', 'llama-cpp-python'):
+for distribution in (
+    'chardet', 'opencv-python-headless', 'xformers', 'sageattention',
+    'llama-cpp-python',
+):
     print(distribution + ':', version(distribution))
 
 llama_library = Path('/usr/local/lib/python3.12/dist-packages/llama_cpp/lib/libllama.so')
