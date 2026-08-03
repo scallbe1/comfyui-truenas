@@ -1,6 +1,7 @@
 FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
     PIP_ROOT_USER_ACTION=ignore \
     PIP_DEFAULT_TIMEOUT=300 \
     PIP_RETRIES=10 \
@@ -43,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     python3 \
     python3-dev \
-    python3-venv \
+    python3-pip \
     python-is-python3 \
     ffmpeg \
     libgl1 \
@@ -72,30 +73,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Use an isolated virtual environment instead of Ubuntu's system Python.
-RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/python -m pip install --no-cache-dir --upgrade \
-        pip \
-        setuptools \
-        wheel
-
-ENV VIRTUAL_ENV=/opt/venv
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
-
-# Fail immediately if the virtual environment is not the active Python.
-RUN /opt/venv/bin/python -c "import sys; assert sys.prefix == '/opt/venv'; print(sys.executable)"
+# Allow pip installations into Ubuntu's system Python without attempting to
+# replace Debian's pip package. All pip-installed packages go under /usr/local.
+RUN printf '%s\n' \
+        '[global]' \
+        'break-system-packages = true' \
+        'timeout = 300' \
+        'retries = 10' \
+        > /etc/pip.conf
 
 WORKDIR /app/ComfyUI
 
-# Base Python tooling. Keep this separate from the pip bootstrap so any
-# package-resolution failure is reported clearly.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir --upgrade \
+# Base Python tooling. Do not upgrade pip itself: Ubuntu installed pip through
+# apt, and replacing that Debian-managed package causes a missing RECORD error.
+# --ignore-installed places current build tooling under /usr/local without
+# uninstalling the Ubuntu packages under /usr/lib.
+RUN python3 -m pip install --no-cache-dir --ignore-installed \
+    "setuptools<81" \
+    wheel \
     cython \
     uv \
     "numpy==1.26.4"
 
 # PyTorch CUDA 13.0 stack. The three versions are kept as a matched set.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir \
     "torch==${TORCH_VERSION}" \
     "torchvision==${TORCHVISION_VERSION}" \
     "torchaudio==${TORCHAUDIO_VERSION}" \
@@ -104,10 +105,10 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir \
 # ComfyUI v0.30.0 and its pinned dependencies, including comfy-aimdo.
 RUN git clone --depth 1 --branch "${COMFYUI_VERSION}" \
         https://github.com/Comfy-Org/ComfyUI.git . && \
-    /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt
+    python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Core utilities and monitoring packages.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir \
     GitPython \
     py-cpuinfo \
     toml \
@@ -117,7 +118,7 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir \
     piexif
 
 # Vision, modeling, face, segmentation, diffusion, and GPU inference packages.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python \
     imageio-ffmpeg \
@@ -152,7 +153,7 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir \
     tiktoken
 
 # Audio, math, document, and utility packages.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir \
     scipy \
     librosa \
     pedalboard \
@@ -165,12 +166,13 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir \
     rotary_embedding_torch
 
 # Cloud, speech-to-text, LLM/API, and document helper packages.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir \
+# stable-audio-tools is intentionally omitted because it pins pandas 2.0.2,
+# which has no Python 3.12 wheel and fails while building from source.
+RUN python3 -m pip install --no-cache-dir \
     fal-client \
     runwayml \
     openai \
     openai-whisper \
-    stable-audio-tools \
     ollama \
     gdown \
     google-generativeai \
@@ -188,16 +190,16 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir \
     websocket-client
 
 # SAM2.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir \
     git+https://github.com/facebookresearch/sam2.git
 
 # NVIDIA Video Effects SDK Python bindings.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir --upgrade \
+RUN python3 -m pip install --no-cache-dir --upgrade \
     --extra-index-url https://pypi.nvidia.com \
     nvidia-vfx
 
 # Re-pin common numeric/data packages after broad dependency installation.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir --upgrade --force-reinstall \
+RUN python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
     "numpy==1.26.4" \
     "pandas<3" \
     "scikit-learn<2" \
@@ -205,26 +207,26 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir --upgrade --force-reinsta
 
 # Re-pin the CUDA 13.0 PyTorch stack in case another package attempted to
 # replace it with a CPU or different-CUDA build.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir --force-reinstall --no-deps \
+RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
     "torch==${TORCH_VERSION}" \
     "torchvision==${TORCHVISION_VERSION}" \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
 # Clean-build llama-cpp-python against the CUDA 13 toolkit in this image.
-RUN /opt/venv/bin/python -m pip uninstall -y \
+RUN python3 -m pip uninstall -y \
         llama-cpp-python \
         llama_cpp_python \
         llama-cpp \
         llama_cpp \
         llama-cpp-py || true && \
-    /opt/venv/bin/python -m pip install --no-cache-dir --upgrade --force-reinstall \
+    python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
         --no-binary=llama-cpp-python \
         "llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}"
 
 # faster-whisper currently uses CTranslate2 CUDA 12 binaries. Install its
 # required CUDA 12 cuBLAS/cuDNN libraries alongside the CUDA 13 ComfyUI stack.
-RUN /opt/venv/bin/python -m pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir \
     faster-whisper \
     huggingface-hub \
     nvidia-cublas-cu12 \
@@ -303,4 +305,4 @@ EXPOSE 8188
 
 # Dynamic VRAM and NVIDIA async offload are normally enabled automatically;
 # --enable-dynamic-vram makes the intended configuration explicit.
-CMD ["/opt/venv/bin/python", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram"]
+CMD ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram"]
