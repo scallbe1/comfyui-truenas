@@ -245,7 +245,7 @@ RUN python3 -m pip install --no-cache-dir \
     lark \
     deep-translator \
     googletrans-py \
-    "argostranslate==1.9.6" \
+    "git+https://github.com/argosopentech/argos-translate.git@08f017c324628434d671cf4d191ce681c620ff33" \
     "stanza==1.10.1" \
     sacremoses \
     spacy \
