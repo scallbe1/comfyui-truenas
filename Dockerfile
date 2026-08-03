@@ -82,7 +82,8 @@ RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
 
 WORKDIR /app/ComfyUI
 
-# Base Python tooling.
+# Base Python tooling. NumPy 1.26.4 remains broadly compatible with older
+# custom nodes while satisfying ComfyUI v0.30.0.
 RUN python3 -m pip install --no-cache-dir --upgrade \
     pip \
     setuptools \
@@ -91,14 +92,14 @@ RUN python3 -m pip install --no-cache-dir --upgrade \
     uv \
     "numpy==1.26.4"
 
-# PyTorch CUDA 13.0 stack. Keep these three versions as a matched set.
+# PyTorch CUDA 13.0 stack. The three versions are kept as a matched set.
 RUN python3 -m pip install --no-cache-dir \
     "torch==${TORCH_VERSION}" \
     "torchvision==${TORCHVISION_VERSION}" \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# Pull the pinned ComfyUI release and install its dependencies.
+# ComfyUI v0.30.0 and its pinned dependencies, including comfy-aimdo.
 RUN git clone --depth 1 --branch "${COMFYUI_VERSION}" \
         https://github.com/Comfy-Org/ComfyUI.git . && \
     python3 -m pip install --no-cache-dir -r requirements.txt
@@ -200,15 +201,15 @@ RUN python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
     "scikit-learn<2" \
     PyWavelets
 
-# Re-pin the CUDA 13.0 PyTorch stack in case another package attempted
-# to replace it with a CPU or different-CUDA build.
+# Re-pin the CUDA 13.0 PyTorch stack in case another package attempted to
+# replace it with a CPU or different-CUDA build.
 RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
     "torch==${TORCH_VERSION}" \
     "torchvision==${TORCHVISION_VERSION}" \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# Clean-build llama-cpp-python against CUDA 13.
+# Clean-build llama-cpp-python against the CUDA 13 toolkit in this image.
 RUN python3 -m pip uninstall -y \
         llama-cpp-python \
         llama_cpp_python \
@@ -219,15 +220,16 @@ RUN python3 -m pip uninstall -y \
         --no-binary=llama-cpp-python \
         "llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}"
 
-# faster-whisper currently uses CTranslate2 CUDA 12 binaries.
-# Install its required CUDA 12 libraries alongside the CUDA 13 stack.
+# faster-whisper currently uses CTranslate2 CUDA 12 binaries. Install its
+# required CUDA 12 cuBLAS/cuDNN libraries alongside the CUDA 13 ComfyUI stack.
 RUN python3 -m pip install --no-cache-dir \
     faster-whisper \
     huggingface-hub \
     nvidia-cublas-cu12 \
     "nvidia-cudnn-cu12==9.*"
 
-# Register the CUDA 12 library directories used by CTranslate2.
+# Register the CUDA 12 library directories used by CTranslate2 without
+# replacing the primary CUDA 13 toolkit paths used by PyTorch and ComfyUI.
 RUN python3 - <<'PY'
 import os
 import nvidia.cublas.lib
@@ -238,19 +240,14 @@ paths = [
     os.path.dirname(nvidia.cudnn.lib.__file__),
 ]
 
-with open(
-    "/etc/ld.so.conf.d/ctranslate2-cu12.conf",
-    "w",
-    encoding="utf-8",
-) as file:
+with open('/etc/ld.so.conf.d/ctranslate2-cu12.conf', 'w', encoding='utf-8') as f:
     for path in paths:
-        file.write(path + "\n")
+        f.write(path + '\n')
 
-print("Registered CTranslate2 CUDA 12 libraries:")
+print('Registered CTranslate2 CUDA 12 libraries:')
 for path in paths:
     print(path)
 PY
-
 RUN ldconfig
 
 # Download faster-whisper large-v3 into the image.
@@ -260,16 +257,14 @@ import os
 from huggingface_hub import snapshot_download
 
 path = snapshot_download(
-    repo_id=os.environ["FASTER_WHISPER_MODEL_REPO"],
-    cache_dir=os.environ["HF_HUB_CACHE"],
+    repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'],
+    cache_dir=os.environ['HF_HUB_CACHE'],
 )
-
-print("Downloaded faster-whisper model to:", path)
+print('Downloaded faster-whisper model to:', path)
 PY
 
-# Build-time verification.
-# GPU availability is checked at runtime because normal Docker builds
-# do not have access to the GPU.
+# Build-time verification. GPU availability itself is checked only when the
+# container runs because Docker builds normally have no GPU attached.
 RUN python3 - <<'PY'
 import os
 import torch
@@ -280,38 +275,30 @@ import ctranslate2
 import llama_cpp
 from huggingface_hub import snapshot_download
 
-assert torch.version.cuda == "13.0", torch.version.cuda
-assert onnxruntime.__version__.startswith("1.28."), onnxruntime.__version__
+assert torch.version.cuda == '13.0', torch.version.cuda
+assert onnxruntime.__version__.startswith('1.28.'), onnxruntime.__version__
 
 model_path = snapshot_download(
-    repo_id=os.environ["FASTER_WHISPER_MODEL_REPO"],
-    cache_dir=os.environ["HF_HUB_CACHE"],
+    repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'],
+    cache_dir=os.environ['HF_HUB_CACHE'],
     local_files_only=True,
 )
 
-print("PyTorch:", torch.__version__)
-print("Torchvision:", torchvision.__version__)
-print("Torchaudio:", torchaudio.__version__)
-print("PyTorch CUDA build:", torch.version.cuda)
-print("ONNX Runtime:", onnxruntime.__version__)
-print("ONNX providers compiled in:", onnxruntime.get_available_providers())
-print("CTranslate2:", ctranslate2.__version__)
-print("llama-cpp-python import: successful")
-print("Verified faster-whisper model:", model_path)
+print('PyTorch:', torch.__version__)
+print('Torchvision:', torchvision.__version__)
+print('Torchaudio:', torchaudio.__version__)
+print('PyTorch CUDA build:', torch.version.cuda)
+print('ONNX Runtime:', onnxruntime.__version__)
+print('ONNX providers compiled in:', onnxruntime.get_available_providers())
+print('CTranslate2:', ctranslate2.__version__)
+print('llama-cpp-python import: successful')
+print('Verified faster-whisper model:', model_path)
 PY
 
 RUN chmod -R a+rX "${HF_HOME}"
 
 EXPOSE 8188
 
-# Dynamic VRAM and NVIDIA asynchronous offload are normally enabled
-# automatically. This flag makes Dynamic VRAM explicit.
-CMD [
-    "python3",
-    "main.py",
-    "--listen",
-    "0.0.0.0",
-    "--port",
-    "8188",
-    "--enable-dynamic-vram"
-]
+# Dynamic VRAM and NVIDIA async offload are normally enabled automatically;
+# --enable-dynamic-vram makes the intended configuration explicit.
+CMD ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram"]
