@@ -274,12 +274,11 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
     easyocr \
     "rembg==2.0.67"
 
-# Additional pure-Python dependencies used by the mounted CatVTON node.
-# Detectron2 is not installed here because this CatVTON variant reaches its
-# SCHP parser before DensePose, and Detectron2 v0.6 is not maintained for the
-# current PyTorch/Python stack. The runtime patch below repairs the logged SCHP
-# extension failure without allowing CatVTON's old requirements to downgrade
-# shared packages.
+# General segmentation and computer-vision dependencies used by multiple nodes.
+# Detectron2 and DensePose are intentionally not included. The legacy
+# pzc163/comfyui-catvton node also contains an obsolete SCHP extension that is
+# incompatible with this PyTorch version, so installing DensePose alone does
+# not make that node compatible.
 RUN python3 -m pip install --no-cache-dir \
     cloudpickle \
     future \
@@ -344,15 +343,9 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
 # standard PyTorch normalization. Removing Apex avoids the largest and most
 # memory-intensive CUDA compilation step in GitHub Actions.
 
-# Keep a current LTXVideo custom-node overlay in the image. The actual
-# custom_nodes directory is mounted from TrueNAS, so the entrypoint applies
-# this compatible copy at container startup.
-ARG LTXVIDEO_REF=master
-RUN git clone --depth 1 --branch "${LTXVIDEO_REF}" \
-        https://github.com/Lightricks/ComfyUI-LTXVideo.git \
-        /opt/custom-node-overlays/ComfyUI-LTXVideo && \
-    python3 -m pip install --no-cache-dir \
-        -r /opt/custom-node-overlays/ComfyUI-LTXVideo/requirements.txt
+# Custom nodes are intentionally not baked into or rewritten by this image.
+# Install and update them through ComfyUI Manager in the persistent
+# /app/ComfyUI/custom_nodes dataset.
 
 # Install llama-cpp-python's runtime dependencies explicitly, then build it
 # once against CUDA 13 for SM 8.6, 8.9, and 12.0. The upstream project does
@@ -417,14 +410,8 @@ for path in paths:
 PY
 RUN ldconfig
 
-# Repair packages that are vulnerable to being shadowed or ABI-broken by the
-# broad custom-node dependency set above.
-#
-# 1. A different PyPI project named "whisper" can replace OpenAI Whisper's
-#    import namespace. Remove both distributions and reinstall only the
-#    official OpenAI package as the final owner of `import whisper`.
-# 2. PyOpenGL-accelerate contains compiled NumPy extensions. Rebuild it after
-#    NumPy has been pinned to 1.26.4 so it cannot retain an incompatible ABI.
+# Ensure the correct OpenAI Whisper distribution owns `import whisper`.
+# Rebuild PyOpenGL-accelerate after the final NumPy pin.
 RUN python3 -m pip uninstall -y \
         whisper \
         openai-whisper \
@@ -511,10 +498,10 @@ print('PyOpenGL accelerate:', version('PyOpenGL-accelerate'))
 print('Verified llama.cpp library:', llama_library)
 print('Verified faster-whisper model:', model_path)
 PYVERIFY
-RUN chmod -R a+rX "${HF_HOME}" /opt/custom-node-overlays
+RUN chmod -R a+rX "${HF_HOME}"
 
-# Runtime initialization fixes configuration and compatibility problems stored
-# in mounted TrueNAS datasets.
+# Runtime initialization creates writable configuration paths and supervises
+# ComfyUI so Manager-requested restarts do not stop the TrueNAS application.
 RUN cat > /usr/local/bin/comfyui-entrypoint <<'SHENTRY'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -522,8 +509,7 @@ set -euo pipefail
 mkdir -p \
     "${YOLO_CONFIG_DIR}" \
     "${MPLCONFIGDIR}" \
-    "${TORCH_EXTENSIONS_DIR}" \
-    /app/ComfyUI/user/backups
+    "${TORCH_EXTENSIONS_DIR}"
 
 # Compile JIT CUDA extensions only for the GPU actually assigned to this
 # container. The image-wide list is needed while building llama.cpp, but using
@@ -538,93 +524,6 @@ PYARCH
 if [[ -n "${RUNTIME_CUDA_ARCH}" ]]; then
     export TORCH_CUDA_ARCH_LIST="${RUNTIME_CUDA_ARCH}"
     echo "[INFO] Runtime CUDA architecture: ${TORCH_CUDA_ARCH_LIST}"
-fi
-
-# Repair the mounted pzc163 CatVTON SCHP extension for current PyTorch.
-# The original source uses Tensor.type() and Tensor.data<T>(), APIs that no
-# longer satisfy PyTorch 2.11's dispatch macros. Patch only those mechanical
-# API migrations, retain a one-time source backup, and clear the failed JIT
-# cache when a change is made so it recompiles cleanly.
-python3 - <<'PYCATVTON'
-from pathlib import Path
-import re
-import shutil
-
-root = Path('/app/ComfyUI/custom_nodes/comfyui-catvton/model/SCHP/modules')
-backup = Path('/app/ComfyUI/user/backups/comfyui-catvton-SCHP-before-torch-2.11')
-changed_paths = []
-
-if root.is_dir():
-    if not backup.exists():
-        shutil.copytree(root, backup)
-
-    patterns = (
-        (re.compile(r'AT_DISPATCH_FLOATING_TYPES\(([^,\n]+)\.type\(\),'),
-         r'AT_DISPATCH_FLOATING_TYPES(\1.scalar_type(),'),
-        (re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\.type\(\)\.scalarType\(\)'),
-         r'\1.scalar_type()'),
-        (re.compile(r'\(([A-Za-z_][A-Za-z0-9_]*)\)\.type\(\)\.is_cuda\(\)'),
-         r'(\1).is_cuda()'),
-        (re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\.data<([^>]+)>\(\)'),
-         r'\1.data_ptr<\2>()'),
-    )
-
-    for path in root.rglob('*'):
-        if path.suffix not in {'.cpp', '.cu', '.h', '.hpp'}:
-            continue
-        original = path.read_text(encoding='utf-8')
-        patched = original
-        for pattern, replacement in patterns:
-            patched = pattern.sub(replacement, patched)
-        if patched != original:
-            path.write_text(patched, encoding='utf-8')
-            changed_paths.append(path)
-
-    if changed_paths:
-        cache = Path('/app/ComfyUI/user/.cache/torch_extensions')
-        for candidate in cache.rglob('inplace_abn') if cache.exists() else ():
-            if candidate.is_dir():
-                shutil.rmtree(candidate, ignore_errors=True)
-        print('[INFO] Patched CatVTON SCHP sources:')
-        for path in changed_paths:
-            print('  ', path)
-    else:
-        print('[INFO] CatVTON SCHP sources already compatible or node not present.')
-PYCATVTON
-
-# Repair the mounted ComfyUI-Whisper node defensively. The node expects
-# OpenAI Whisper's tokenizer module; import LANGUAGES explicitly so node-info
-# retrieval cannot fail merely because the package did not expose the submodule
-# as a top-level attribute yet.
-python3 - <<'PYWHISPER'
-from pathlib import Path
-
-path = Path('/app/ComfyUI/custom_nodes/ComfyUI-Whisper/apply_whisper.py')
-backup = Path('/app/ComfyUI/user/backups/ComfyUI-Whisper-apply_whisper.py.before-tokenizer-fix')
-if path.is_file():
-    text = path.read_text(encoding='utf-8')
-    original = text
-    if 'from whisper.tokenizer import LANGUAGES' not in text:
-        text = text.replace('import whisper\n', 'import whisper\nfrom whisper.tokenizer import LANGUAGES\n', 1)
-    text = text.replace('whisper.tokenizer.LANGUAGES', 'LANGUAGES')
-    if text != original:
-        if not backup.exists():
-            backup.write_text(original, encoding='utf-8')
-        path.write_text(text, encoding='utf-8')
-        print('[INFO] Patched ComfyUI-Whisper tokenizer import.')
-PYWHISPER
-
-# Replace the stale mounted LTXVideo custom node with the current compatible
-# copy. Create a one-time backup before the first replacement.
-LTX_SOURCE=/opt/custom-node-overlays/ComfyUI-LTXVideo
-LTX_TARGET=/app/ComfyUI/custom_nodes/ComfyUI-LTXVideo
-LTX_BACKUP=/app/ComfyUI/user/backups/ComfyUI-LTXVideo-before-v0.30.0.tar.gz
-if [[ -d "${LTX_TARGET}" && -d "${LTX_SOURCE}" ]]; then
-    if [[ ! -f "${LTX_BACKUP}" ]]; then
-        tar -czf "${LTX_BACKUP}" -C "$(dirname "${LTX_TARGET}")" "$(basename "${LTX_TARGET}")"
-    fi
-    rsync -a --delete --exclude='.git/' "${LTX_SOURCE}/" "${LTX_TARGET}/"
-    find "${LTX_TARGET}" -type d -name __pycache__ -prune -exec rm -rf {} +
 fi
 
 # Point WAS Node Suite at the system ffmpeg binary without discarding its
