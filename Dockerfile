@@ -507,7 +507,10 @@ PYWAS
 cd /app/ComfyUI
 exec python3 main.py "$@"
 SHENTRY
-RUN chmod +x /usr/local/bin/comfyui-entrypoint
+# Git/Windows may save this Dockerfile with CRLF. The heredoc preserves those
+# carriage returns, which would make the shebang resolve as 'bash\r'.
+RUN sed -i 's/\r$//' /usr/local/bin/comfyui-entrypoint && \
+    chmod +x /usr/local/bin/comfyui-entrypoint
 
 EXPOSE 8188
 ENTRYPOINT ["/usr/local/bin/comfyui-entrypoint"]
