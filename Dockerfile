@@ -11,11 +11,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     UV_CONFIG_FILE=/etc/uv/uv.toml \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/ComfyUI \
     PYTHONWARNINGS=ignore::FutureWarning,ignore::SyntaxWarning \
     XDG_CONFIG_HOME=/app/ComfyUI/user/.config \
     YOLO_CONFIG_DIR=/app/ComfyUI/user/.config/Ultralytics \
     MPLCONFIGDIR=/app/ComfyUI/user/.cache/matplotlib \
-    CHROME_BIN=/usr/bin/google-chrome
+    CHROME_BIN=/usr/bin/google-chrome \
+    TORCH_EXTENSIONS_DIR=/app/ComfyUI/user/.cache/torch_extensions
 
 # CUDA build/runtime paths.
 ENV CUDA_HOME=/usr/local/cuda \
@@ -157,8 +159,8 @@ RUN python3 -m pip install --no-cache-dir \
     cachetools \
     qrcode[pil] \
     google-cloud-storage \
-    PyOpenGL \
-    PyOpenGL-accelerate
+    "PyOpenGL==3.1.10" \
+    "PyOpenGL-accelerate==3.1.10"
 
 # Vision, modeling, face, segmentation, diffusion, and GPU inference packages.
 RUN python3 -m pip install --no-cache-dir \
@@ -217,7 +219,7 @@ RUN python3 -m pip install --no-cache-dir \
     fal-client \
     runwayml \
     openai \
-    openai-whisper \
+    "openai-whisper==20250625" \
     ollama \
     gdown \
     google-generativeai \
@@ -271,6 +273,24 @@ RUN python3 -m pip install --no-cache-dir \
 RUN python3 -m pip install --no-cache-dir --no-deps \
     easyocr \
     "rembg==2.0.67"
+
+# Additional pure-Python dependencies used by the mounted CatVTON node.
+# Detectron2 is not installed here because this CatVTON variant reaches its
+# SCHP parser before DensePose, and Detectron2 v0.6 is not maintained for the
+# current PyTorch/Python stack. The runtime patch below repairs the logged SCHP
+# extension failure without allowing CatVTON's old requirements to downgrade
+# shared packages.
+RUN python3 -m pip install --no-cache-dir \
+    cloudpickle \
+    future \
+    hydra-core \
+    iopath \
+    omegaconf \
+    pycocotools \
+    pydot \
+    tensorboard \
+    termcolor \
+    yacs
 
 # Bake the multilingual sentence splitter used by AlekPet translation nodes.
 RUN python3 -m spacy download xx_sent_ud_sm
@@ -397,6 +417,26 @@ for path in paths:
 PY
 RUN ldconfig
 
+# Repair packages that are vulnerable to being shadowed or ABI-broken by the
+# broad custom-node dependency set above.
+#
+# 1. A different PyPI project named "whisper" can replace OpenAI Whisper's
+#    import namespace. Remove both distributions and reinstall only the
+#    official OpenAI package as the final owner of `import whisper`.
+# 2. PyOpenGL-accelerate contains compiled NumPy extensions. Rebuild it after
+#    NumPy has been pinned to 1.26.4 so it cannot retain an incompatible ABI.
+RUN python3 -m pip uninstall -y \
+        whisper \
+        openai-whisper \
+        PyOpenGL \
+        PyOpenGL-accelerate || true && \
+    python3 -m pip install --no-cache-dir --no-deps \
+        "openai-whisper==20250625" \
+        "PyOpenGL==3.1.10" && \
+    python3 -m pip install --no-cache-dir --no-deps --no-build-isolation \
+        --force-reinstall \
+        "PyOpenGL-accelerate==3.1.10"
+
 # Download faster-whisper large-v3 into the image.
 RUN mkdir -p "${HF_HUB_CACHE}" && \
     python3 - <<'PY'
@@ -424,11 +464,17 @@ import onnxruntime
 import torch
 import torchaudio
 import torchvision
+import whisper
+from whisper.tokenizer import LANGUAGES
+from OpenGL_accelerate import arraydatatype as _opengl_accelerate_arraydatatype
 from huggingface_hub import snapshot_download
 
 assert torch.version.cuda == '13.0', torch.version.cuda
 assert onnxruntime.__version__.startswith('1.28.'), onnxruntime.__version__
 assert np.__version__ == '1.26.4', np.__version__
+assert callable(whisper.load_model), whisper.__file__
+assert len(LANGUAGES) >= 90, len(LANGUAGES)
+assert _opengl_accelerate_arraydatatype is not None
 
 required_modules = [
     'OpenEXR', 'OpenGL_accelerate', 'chardet', 'colour', 'cv2', 'dill', 'easyocr', 'feedparser',
@@ -460,12 +506,15 @@ print('PyTorch CUDA build:', torch.version.cuda)
 print('ONNX Runtime:', onnxruntime.__version__)
 print('ONNX providers compiled in:', onnxruntime.get_available_providers())
 print('CTranslate2:', ctranslate2.__version__)
+print('OpenAI Whisper:', version('openai-whisper'), whisper.__file__)
+print('PyOpenGL accelerate:', version('PyOpenGL-accelerate'))
 print('Verified llama.cpp library:', llama_library)
 print('Verified faster-whisper model:', model_path)
 PYVERIFY
 RUN chmod -R a+rX "${HF_HOME}" /opt/custom-node-overlays
 
-# Runtime initialization fixes configuration stored in mounted TrueNAS datasets.
+# Runtime initialization fixes configuration and compatibility problems stored
+# in mounted TrueNAS datasets.
 RUN cat > /usr/local/bin/comfyui-entrypoint <<'SHENTRY'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -473,7 +522,97 @@ set -euo pipefail
 mkdir -p \
     "${YOLO_CONFIG_DIR}" \
     "${MPLCONFIGDIR}" \
+    "${TORCH_EXTENSIONS_DIR}" \
     /app/ComfyUI/user/backups
+
+# Compile JIT CUDA extensions only for the GPU actually assigned to this
+# container. The image-wide list is needed while building llama.cpp, but using
+# it at runtime would make old custom nodes compile for three GPU families.
+RUNTIME_CUDA_ARCH="$(python3 - <<'PYARCH'
+import torch
+if torch.cuda.is_available():
+    major, minor = torch.cuda.get_device_capability(0)
+    print(f'{major}.{minor}')
+PYARCH
+)"
+if [[ -n "${RUNTIME_CUDA_ARCH}" ]]; then
+    export TORCH_CUDA_ARCH_LIST="${RUNTIME_CUDA_ARCH}"
+    echo "[INFO] Runtime CUDA architecture: ${TORCH_CUDA_ARCH_LIST}"
+fi
+
+# Repair the mounted pzc163 CatVTON SCHP extension for current PyTorch.
+# The original source uses Tensor.type() and Tensor.data<T>(), APIs that no
+# longer satisfy PyTorch 2.11's dispatch macros. Patch only those mechanical
+# API migrations, retain a one-time source backup, and clear the failed JIT
+# cache when a change is made so it recompiles cleanly.
+python3 - <<'PYCATVTON'
+from pathlib import Path
+import re
+import shutil
+
+root = Path('/app/ComfyUI/custom_nodes/comfyui-catvton/model/SCHP/modules')
+backup = Path('/app/ComfyUI/user/backups/comfyui-catvton-SCHP-before-torch-2.11')
+changed_paths = []
+
+if root.is_dir():
+    if not backup.exists():
+        shutil.copytree(root, backup)
+
+    patterns = (
+        (re.compile(r'AT_DISPATCH_FLOATING_TYPES\(([^,\n]+)\.type\(\),'),
+         r'AT_DISPATCH_FLOATING_TYPES(\1.scalar_type(),'),
+        (re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\.type\(\)\.scalarType\(\)'),
+         r'\1.scalar_type()'),
+        (re.compile(r'\(([A-Za-z_][A-Za-z0-9_]*)\)\.type\(\)\.is_cuda\(\)'),
+         r'(\1).is_cuda()'),
+        (re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\.data<([^>]+)>\(\)'),
+         r'\1.data_ptr<\2>()'),
+    )
+
+    for path in root.rglob('*'):
+        if path.suffix not in {'.cpp', '.cu', '.h', '.hpp'}:
+            continue
+        original = path.read_text(encoding='utf-8')
+        patched = original
+        for pattern, replacement in patterns:
+            patched = pattern.sub(replacement, patched)
+        if patched != original:
+            path.write_text(patched, encoding='utf-8')
+            changed_paths.append(path)
+
+    if changed_paths:
+        cache = Path('/app/ComfyUI/user/.cache/torch_extensions')
+        for candidate in cache.rglob('inplace_abn') if cache.exists() else ():
+            if candidate.is_dir():
+                shutil.rmtree(candidate, ignore_errors=True)
+        print('[INFO] Patched CatVTON SCHP sources:')
+        for path in changed_paths:
+            print('  ', path)
+    else:
+        print('[INFO] CatVTON SCHP sources already compatible or node not present.')
+PYCATVTON
+
+# Repair the mounted ComfyUI-Whisper node defensively. The node expects
+# OpenAI Whisper's tokenizer module; import LANGUAGES explicitly so node-info
+# retrieval cannot fail merely because the package did not expose the submodule
+# as a top-level attribute yet.
+python3 - <<'PYWHISPER'
+from pathlib import Path
+
+path = Path('/app/ComfyUI/custom_nodes/ComfyUI-Whisper/apply_whisper.py')
+backup = Path('/app/ComfyUI/user/backups/ComfyUI-Whisper-apply_whisper.py.before-tokenizer-fix')
+if path.is_file():
+    text = path.read_text(encoding='utf-8')
+    original = text
+    if 'from whisper.tokenizer import LANGUAGES' not in text:
+        text = text.replace('import whisper\n', 'import whisper\nfrom whisper.tokenizer import LANGUAGES\n', 1)
+    text = text.replace('whisper.tokenizer.LANGUAGES', 'LANGUAGES')
+    if text != original:
+        if not backup.exists():
+            backup.write_text(original, encoding='utf-8')
+        path.write_text(text, encoding='utf-8')
+        print('[INFO] Patched ComfyUI-Whisper tokenizer import.')
+PYWHISPER
 
 # Replace the stale mounted LTXVideo custom node with the current compatible
 # copy. Create a one-time backup before the first replacement.
@@ -504,13 +643,54 @@ if path.parent.is_dir():
     path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
 PYWAS
 
-cd /app/ComfyUI
-exec python3 main.py "$@"
+# Run ComfyUI under a tiny supervisor rather than allowing its legacy restart
+# path to replace the process with `python3 main.py`. ComfyUI's supported CLI
+# restart mode creates this marker and exits cleanly; the supervisor then starts
+# it again from the correct directory with the correct Python module path.
+COMFY_SESSION=/tmp/comfyui-cli-session
+export __COMFY_CLI_SESSION__="${COMFY_SESSION}"
+
+child_pid=""
+stop_child() {
+    if [[ -n "${child_pid}" ]] && kill -0 "${child_pid}" 2>/dev/null; then
+        kill -TERM "${child_pid}" 2>/dev/null || true
+        wait "${child_pid}" 2>/dev/null || true
+    fi
+    exit 143
+}
+trap stop_child TERM INT
+
+while true; do
+    rm -f "${COMFY_SESSION}.reboot"
+
+    (
+        cd /app/ComfyUI
+        exec python3 /app/ComfyUI/main.py "$@"
+    ) &
+    child_pid=$!
+
+    set +e
+    wait "${child_pid}"
+    status=$?
+    set -e
+    child_pid=""
+
+    if [[ -f "${COMFY_SESSION}.reboot" ]]; then
+        rm -f "${COMFY_SESSION}.reboot"
+        echo "[INFO] ComfyUI Manager requested a restart; relaunching ComfyUI."
+        continue
+    fi
+
+    exit "${status}"
+done
 SHENTRY
 # Git/Windows may save this Dockerfile with CRLF. The heredoc preserves those
-# carriage returns, which would make the shebang resolve as 'bash\r'.
+# carriage returns, which would make the shebang resolve as 'bash\r'. Strip
+# them, validate the script, and verify ComfyUI's local Python package is visible.
 RUN sed -i 's/\r$//' /usr/local/bin/comfyui-entrypoint && \
-    chmod +x /usr/local/bin/comfyui-entrypoint
+    chmod +x /usr/local/bin/comfyui-entrypoint && \
+    bash -n /usr/local/bin/comfyui-entrypoint && \
+    PYTHONPATH=/app/ComfyUI python3 -c "import comfy; print('Verified ComfyUI Python path:', comfy.__path__)"
 
 EXPOSE 8188
 ENTRYPOINT ["/usr/local/bin/comfyui-entrypoint"]
