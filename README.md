@@ -4,7 +4,7 @@ This containerized ComfyUI implementation was updated in August 2026. It is base
 
 ## Included Platform
 
-- ComfyUI 0.30.0
+- ComfyUI 0.33.1
 - Python 3.12
 - PyTorch 2.11.0 with CUDA 13.0
 - Torchvision 0.26.0
