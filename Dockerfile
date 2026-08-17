@@ -42,7 +42,7 @@ ENV HF_HOME=/opt/huggingface \
     HF_HUB_DOWNLOAD_TIMEOUT=300 \
     FASTER_WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
 
-ARG COMFYUI_VERSION=v0.30.0
+ARG COMFYUI_VERSION=v0.33.1
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
 ARG TORCHAUDIO_VERSION=2.11.0
@@ -137,10 +137,13 @@ RUN python3 -m pip install --no-cache-dir \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# ComfyUI v0.30.0 and its pinned dependencies, including comfy-aimdo.
+# ComfyUI v0.33.1 and its pinned core/frontend dependencies.
+# Manager v4 is now installed as a Python package through manager_requirements.txt;
+# do not clone ComfyUI-Manager into custom_nodes.
 RUN git clone --depth 1 --branch "${COMFYUI_VERSION}" \
         https://github.com/Comfy-Org/ComfyUI.git . && \
-    python3 -m pip install --no-cache-dir -r requirements.txt
+    python3 -m pip install --no-cache-dir -r requirements.txt && \
+    python3 -m pip install --no-cache-dir -r manager_requirements.txt
 
 # Core utilities and monitoring packages.
 RUN python3 -m pip install --no-cache-dir \
@@ -344,7 +347,8 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
 # memory-intensive CUDA compilation step in GitHub Actions.
 
 # Custom nodes are intentionally not baked into or rewritten by this image.
-# Install and update them through ComfyUI Manager in the persistent
+# ComfyUI-Manager v4 itself is supplied by manager_requirements.txt above.
+# Install and update other custom nodes through Manager in the persistent
 # /app/ComfyUI/custom_nodes dataset.
 
 # Install llama-cpp-python's runtime dependencies explicitly, then build it
@@ -455,7 +459,9 @@ import whisper
 from whisper.tokenizer import LANGUAGES
 from OpenGL_accelerate import arraydatatype as _opengl_accelerate_arraydatatype
 from huggingface_hub import snapshot_download
+from comfyui_version import __version__ as comfyui_version
 
+assert comfyui_version == '0.33.1', comfyui_version
 assert torch.version.cuda == '13.0', torch.version.cuda
 assert onnxruntime.__version__.startswith('1.28.'), onnxruntime.__version__
 assert np.__version__ == '1.26.4', np.__version__
@@ -486,6 +492,7 @@ model_path = snapshot_download(
     local_files_only=True,
 )
 
+print('ComfyUI:', comfyui_version)
 print('PyTorch:', torch.__version__)
 print('Torchvision:', torchvision.__version__)
 print('Torchaudio:', torchaudio.__version__)
@@ -593,4 +600,4 @@ RUN sed -i 's/\r$//' /usr/local/bin/comfyui-entrypoint && \
 
 EXPOSE 8188
 ENTRYPOINT ["/usr/local/bin/comfyui-entrypoint"]
-CMD ["--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram"]
+CMD ["--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram", "--enable-manager"]
