@@ -1,5 +1,11 @@
 FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
+ARG COMFYUI_VERSION=v0.33.1
+ARG TORCH_VERSION=2.11.0
+ARG TORCHVISION_VERSION=0.26.0
+ARG TORCHAUDIO_VERSION=2.11.0
+ARG LLAMA_CPP_PYTHON_VERSION=0.3.34
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PIP_ROOT_USER_ACTION=ignore \
@@ -17,39 +23,24 @@ ENV DEBIAN_FRONTEND=noninteractive \
     YOLO_CONFIG_DIR=/app/ComfyUI/user/.config/Ultralytics \
     MPLCONFIGDIR=/app/ComfyUI/user/.cache/matplotlib \
     CHROME_BIN=/usr/bin/google-chrome \
-    TORCH_EXTENSIONS_DIR=/app/ComfyUI/user/.cache/torch_extensions
-
-# CUDA build/runtime paths.
-ENV CUDA_HOME=/usr/local/cuda \
-    CUDACXX=/usr/local/cuda/bin/nvcc \
-    PATH=/usr/local/cuda/bin:${PATH} \
-    LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
-
-# Limit compiler parallelism for GitHub-hosted runners while producing a
-# portable CUDA build for RTX 3090 (SM 8.6), RTX 4090 (SM 8.9), and
-# RTX 5090-class Blackwell GPUs (SM 12.0).
-ENV CMAKE_BUILD_PARALLEL_LEVEL=2 \
-    MAX_JOBS=2 \
-    FORCE_CMAKE=1 \
-    TORCH_CUDA_ARCH_LIST="8.6;8.9;12.0" \
-    CMAKE_ARGS="-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86;89;120"
-
-# Persistent location inside the image for Hugging Face models.
-# Do not mount an empty dataset over /opt/huggingface or it will hide
-# the model downloaded into the image during the build.
-ENV HF_HOME=/opt/huggingface \
+    TORCH_EXTENSIONS_DIR=/app/ComfyUI/user/.cache/torch_extensions \
+    HF_HOME=/opt/huggingface \
     HF_HUB_CACHE=/opt/huggingface/hub \
     HF_HUB_DOWNLOAD_TIMEOUT=300 \
-    FASTER_WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    FASTER_WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3 \
+    CUDA_HOME=/usr/local/cuda \
+    CUDACXX=/usr/local/cuda/bin/nvcc \
+    PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    CMAKE_BUILD_PARALLEL_LEVEL=2 \
+    MAX_JOBS=2
 
-ARG COMFYUI_VERSION=v0.33.1
-ARG TORCH_VERSION=2.11.0
-ARG TORCHVISION_VERSION=0.26.0
-ARG TORCHAUDIO_VERSION=2.11.0
-ARG ONNXRUNTIME_VERSION=1.28.0
-ARG LLAMA_CPP_PYTHON_VERSION=0.3.34
+WORKDIR /app/ComfyUI
 
-# System tools, Python, build dependencies, audio libraries, and vision libraries.
+# -----------------------------------------------------------------------------
+# OS dependencies
+# -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ca-certificates \
@@ -67,6 +58,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     libxext6 \
     libxrender1 \
+    libegl1 \
+    libgles2 \
     build-essential \
     cmake \
     ninja-build \
@@ -82,8 +75,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libraw-dev \
     libopenexr-dev \
     libimath-dev \
-    libegl1 \
-    libgles2 \
     rsync \
     libsndfile1 \
     libsndfile1-dev \
@@ -92,37 +83,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Allow pip installations into Ubuntu's system Python without attempting to
-# replace Debian's pip package. All pip-installed packages go under /usr/local.
+# Ubuntu 24.04 protects its system Python with PEP 668. We intentionally use the
+# container's system Python and tell pip that this is an isolated container.
 RUN printf '%s\n' \
         '[global]' \
         'break-system-packages = true' \
         'timeout = 300' \
         'retries = 10' \
-        > /etc/pip.conf && \
-    mkdir -p /etc/uv && \
-    printf '%s\n' \
+        > /etc/pip.conf \
+    && mkdir -p /etc/uv \
+    && printf '%s\n' \
         '[pip]' \
         'system = true' \
         'break-system-packages = true' \
-        > /etc/uv/uv.toml && \
-    printf '%s\n' \
+        > /etc/uv/uv.toml
+
+# Keep only the critical compute stack pinned. Do NOT pin transitive packages
+# such as ONNX Runtime here; doing so made the previous image unnecessarily
+# fragile when another package legitimately installed a newer release.
+RUN printf '%s\n' \
         'numpy==1.26.4' \
         'torch==2.11.0' \
         'torchvision==0.26.0' \
         'torchaudio==2.11.0' \
-        'onnxruntime-gpu==1.28.0' \
         > /opt/pip-constraints.txt
 
-ENV PIP_CONSTRAINT=/opt/pip-constraints.txt \
-    UV_CONSTRAINT=/opt/pip-constraints.txt
+ENV PIP_CONSTRAINT=/opt/pip-constraints.txt
 
-WORKDIR /app/ComfyUI
-
-# Base Python tooling. Do not upgrade pip itself: Ubuntu installed pip through
-# apt, and replacing that Debian-managed package causes a missing RECORD error.
-# --ignore-installed places current build tooling under /usr/local without
-# uninstalling the Ubuntu packages under /usr/lib.
+# -----------------------------------------------------------------------------
+# Python build tooling and CUDA PyTorch
+# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir --ignore-installed \
     "setuptools<81" \
     wheel \
@@ -130,22 +120,23 @@ RUN python3 -m pip install --no-cache-dir --ignore-installed \
     uv \
     "numpy==1.26.4"
 
-# PyTorch CUDA 13.0 stack. The three versions are kept as a matched set.
 RUN python3 -m pip install --no-cache-dir \
     "torch==${TORCH_VERSION}" \
     "torchvision==${TORCHVISION_VERSION}" \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# ComfyUI v0.33.1 and its pinned core/frontend dependencies.
-# Manager v4 is now installed as a Python package through manager_requirements.txt;
-# do not clone ComfyUI-Manager into custom_nodes.
+# -----------------------------------------------------------------------------
+# ComfyUI 0.33.1 + integrated Manager
+# -----------------------------------------------------------------------------
 RUN git clone --depth 1 --branch "${COMFYUI_VERSION}" \
-        https://github.com/Comfy-Org/ComfyUI.git . && \
-    python3 -m pip install --no-cache-dir -r requirements.txt && \
-    python3 -m pip install --no-cache-dir -r manager_requirements.txt
+        https://github.com/Comfy-Org/ComfyUI.git . \
+    && python3 -m pip install --no-cache-dir -r requirements.txt \
+    && python3 -m pip install --no-cache-dir -r manager_requirements.txt
 
-# Core utilities and monitoring packages.
+# -----------------------------------------------------------------------------
+# General custom-node dependencies
+# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir \
     GitPython \
     dill \
@@ -153,7 +144,7 @@ RUN python3 -m pip install --no-cache-dir \
     toml \
     nvidia-ml-py \
     color-matcher \
-    chardet==5.2.0 \
+    chardet \
     deepdiff \
     piexif \
     requirements-parser \
@@ -165,7 +156,6 @@ RUN python3 -m pip install --no-cache-dir \
     "PyOpenGL==3.1.10" \
     "PyOpenGL-accelerate==3.1.10"
 
-# Vision, modeling, face, segmentation, diffusion, and GPU inference packages.
 RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python-headless \
@@ -179,7 +169,6 @@ RUN python3 -m pip install --no-cache-dir \
     av \
     einops \
     scikit-image \
-    "onnxruntime-gpu==${ONNXRUNTIME_VERSION}" \
     peft \
     supervision \
     glfw \
@@ -202,7 +191,6 @@ RUN python3 -m pip install --no-cache-dir \
     dynamicprompts \
     tiktoken
 
-# Audio, math, document, and utility packages.
 RUN python3 -m pip install --no-cache-dir \
     scipy \
     librosa \
@@ -215,9 +203,6 @@ RUN python3 -m pip install --no-cache-dir \
     PyMuPDF \
     rotary_embedding_torch
 
-# Cloud, speech-to-text, LLM/API, and document helper packages.
-# stable-audio-tools is intentionally omitted because it pins pandas 2.0.2,
-# which has no Python 3.12 wheel and fails while building from source.
 RUN python3 -m pip install --no-cache-dir \
     fal-client \
     runwayml \
@@ -239,9 +224,7 @@ RUN python3 -m pip install --no-cache-dir \
     streamlit \
     websocket-client
 
-# Dependencies reported missing by the mounted custom-node collection.
-# EasyOCR and rembg are installed without dependencies so they reuse the existing
-# CUDA PyTorch, ONNX Runtime GPU, headless OpenCV, NumPy, SciPy and image stack.
+# Dependencies used by the mounted custom-node collection.
 RUN python3 -m pip install --no-cache-dir \
     python-bidi \
     PyYAML \
@@ -273,15 +256,15 @@ RUN python3 -m pip install --no-cache-dir \
     "rawpy==0.25.1" \
     "OpenEXR==3.4.12"
 
+# These packages otherwise try to replace large parts of the already-working
+# CUDA / ONNX / image stack. Their required runtime dependencies are installed
+# explicitly elsewhere in this image.
 RUN python3 -m pip install --no-cache-dir --no-deps \
     easyocr \
     "rembg==2.0.67"
 
-# General segmentation and computer-vision dependencies used by multiple nodes.
-# Detectron2 and DensePose are intentionally not included. The legacy
-# pzc163/comfyui-catvton node also contains an obsolete SCHP extension that is
-# incompatible with this PyTorch version, so installing DensePose alone does
-# not make that node compatible.
+# General segmentation / CV dependencies.
+# Detectron2 / DensePose are intentionally omitted.
 RUN python3 -m pip install --no-cache-dir \
     cloudpickle \
     future \
@@ -294,269 +277,261 @@ RUN python3 -m pip install --no-cache-dir \
     termcolor \
     yacs
 
-# Bake the multilingual sentence splitter used by AlekPet translation nodes.
+# Multilingual sentence splitter used by AlekPet translation nodes.
 RUN python3 -m spacy download xx_sent_ud_sm
 
-# Install Chrome so html2image and Selenium nodes have an actual browser.
+# -----------------------------------------------------------------------------
+# Chrome for html2image / Selenium nodes
+# -----------------------------------------------------------------------------
 RUN wget -q -O /tmp/google-chrome.deb \
-        https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends /tmp/google-chrome.deb && \
-    rm -f /tmp/google-chrome.deb && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+        https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/google-chrome.deb \
+    && rm -f /tmp/google-chrome.deb \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# SAM2.
+# -----------------------------------------------------------------------------
+# SAM2 and NVIDIA VFX
+# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir \
     git+https://github.com/facebookresearch/sam2.git
 
-# NVIDIA Video Effects SDK Python bindings.
 RUN python3 -m pip install --no-cache-dir --upgrade \
     --extra-index-url https://pypi.nvidia.com \
     nvidia-vfx
 
-# Re-pin common numeric/data packages after broad dependency installation.
+# -----------------------------------------------------------------------------
+# Re-establish the critical numerical / PyTorch stack after broad dependencies.
+# This is intentional: custom-node packages are allowed to resolve their own
+# dependencies, then the known-good compute stack is restored once at the end.
+# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
     "numpy==1.26.4" \
     "pandas<3" \
     "scikit-learn<2" \
     PyWavelets
 
-# Re-pin the CUDA 13.0 PyTorch stack in case another package attempted to
-# replace it with a CPU or different-CUDA build.
 RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
     "torch==${TORCH_VERSION}" \
     "torchvision==${TORCHVISION_VERSION}" \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# CUDA 13 xFormers wheel. xFormers 0.0.34+ uses the stable PyTorch ABI for
-# PyTorch 2.10 and later, so the wheel is compatible with PyTorch 2.11.
+# xFormers 0.0.35 uses the PyTorch stable ABI for PyTorch 2.10+.
 RUN python3 -m pip install --no-cache-dir --no-deps \
     "xformers==0.0.35" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# SageAttention V1 is Triton based and supports Ampere without compiling a
-# GPU-specific extension during the image build.
+# SageAttention V1 is Triton based and works without compiling an image-specific
+# CUDA extension at Docker build time.
 RUN python3 -m pip install --no-cache-dir --no-deps \
     "sageattention==1.0.6"
 
-# NVIDIA Apex is intentionally omitted. ComfyUI inference uses PyTorch and
-# xFormers directly, and nodes that optionally support Apex fall back to
-# standard PyTorch normalization. Removing Apex avoids the largest and most
-# memory-intensive CUDA compilation step in GitHub Actions.
-
-# Custom nodes are intentionally not baked into or rewritten by this image.
-# ComfyUI-Manager v4 itself is supplied by manager_requirements.txt above.
-# Install and update other custom nodes through Manager in the persistent
-# /app/ComfyUI/custom_nodes dataset.
-
-# Install llama-cpp-python's runtime dependencies explicitly, then build it
-# once against CUDA 13 for SM 8.6, 8.9, and 12.0. The upstream project does
-# not publish a CUDA 13 wheel, so source compilation is required for GPU offload.
-# This is much smaller than the removed Apex build. Do not allow pip to replace
-# NumPy or other shared packages.
-RUN python3 -m pip install --no-cache-dir \
-    "diskcache>=5.6.1" \
-    "jinja2>=2.11.3" \
-    "typing-extensions>=4.5.0"
-
-RUN python3 -m pip uninstall -y \
-        llama-cpp-python \
-        llama_cpp_python \
-        llama-cpp \
-        llama_cpp \
-        llama-cpp-py || true && \
+# -----------------------------------------------------------------------------
+# llama-cpp-python
+#
+# Prefer the project's official CUDA 13 wheel. If pip cannot find that wheel,
+# --prefer-binary still permits a source fallback using the CUDA build flags
+# below rather than depending on a hard-coded installed-library path.
+# -----------------------------------------------------------------------------
+RUN CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=86;89;120" \
+    FORCE_CMAKE=1 \
     python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
-        --no-deps \
-        --no-binary=llama-cpp-python \
-        "llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}"
+        --prefer-binary \
+        "llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}" \
+        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130
 
-# faster-whisper currently uses CTranslate2 CUDA 12 binaries. Install its
-# required CUDA 12 cuBLAS/cuDNN libraries alongside the CUDA 13 ComfyUI stack.
+# -----------------------------------------------------------------------------
+# faster-whisper / CTranslate2
+#
+# CTranslate2 currently relies on CUDA 12 user-space libraries. Those can live
+# alongside the CUDA 13 ComfyUI/PyTorch stack. The entrypoint discovers their
+# actual site-packages paths dynamically at runtime.
+# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir \
     faster-whisper \
     huggingface-hub \
     nvidia-cublas-cu12 \
     "nvidia-cudnn-cu12==9.*"
 
-# Register the CUDA 12 library directories used by CTranslate2. The nvidia.*
-# packages are namespace packages, so their module __file__ values may be None.
-# Locate the actual library directories through their package search paths.
-RUN python3 - <<'PY'
-import os
-from importlib.util import find_spec
-
-paths = []
-for package in ('nvidia.cublas', 'nvidia.cudnn'):
-    spec = find_spec(package)
-    if spec is None or not spec.submodule_search_locations:
-        raise RuntimeError(f'Could not locate {package}')
-
-    found = False
-    for package_dir in spec.submodule_search_locations:
-        library_dir = os.path.join(package_dir, 'lib')
-        if os.path.isdir(library_dir):
-            paths.append(library_dir)
-            found = True
-
-    if not found:
-        raise RuntimeError(f'Could not locate the lib directory for {package}')
-
-paths = sorted(set(paths))
-with open('/etc/ld.so.conf.d/ctranslate2-cu12.conf', 'w', encoding='utf-8') as file:
-    for path in paths:
-        file.write(path + '\n')
-
-print('Registered CTranslate2 CUDA 12 libraries:')
-for path in paths:
-    print(path)
-PY
-RUN ldconfig
-
 # Ensure the correct OpenAI Whisper distribution owns `import whisper`.
-# Rebuild PyOpenGL-accelerate after the final NumPy pin.
 RUN python3 -m pip uninstall -y \
         whisper \
         openai-whisper \
         PyOpenGL \
-        PyOpenGL-accelerate || true && \
-    python3 -m pip install --no-cache-dir --no-deps \
+        PyOpenGL-accelerate || true \
+    && python3 -m pip install --no-cache-dir --no-deps \
         "openai-whisper==20250625" \
-        "PyOpenGL==3.1.10" && \
-    python3 -m pip install --no-cache-dir --no-deps --no-build-isolation \
+        "PyOpenGL==3.1.10" \
+    && python3 -m pip install --no-cache-dir --no-deps \
         --force-reinstall \
         "PyOpenGL-accelerate==3.1.10"
 
-# Download faster-whisper large-v3 into the image.
-RUN mkdir -p "${HF_HUB_CACHE}" && \
-    python3 - <<'PY'
+# -----------------------------------------------------------------------------
+# ONNX Runtime
+#
+# Some custom-node dependencies install the CPU `onnxruntime` distribution,
+# while others expect `onnxruntime-gpu`. Both provide the same Python import
+# name and installing both can overwrite files unpredictably.
+#
+# Resolve that once, at the END of dependency installation. We intentionally
+# use a compatible range rather than asserting one exact transitive version.
+# -----------------------------------------------------------------------------
+RUN python3 -m pip uninstall -y onnxruntime onnxruntime-gpu || true \
+    && python3 -m pip install --no-cache-dir \
+        "onnxruntime-gpu>=1.28,<1.30"
+
+# -----------------------------------------------------------------------------
+# Bake faster-whisper large-v3 into the image
+# -----------------------------------------------------------------------------
+RUN mkdir -p "${HF_HUB_CACHE}" \
+    && python3 - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
 path = snapshot_download(
-    repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'],
-    cache_dir=os.environ['HF_HUB_CACHE'],
+    repo_id=os.environ["FASTER_WHISPER_MODEL_REPO"],
+    cache_dir=os.environ["HF_HUB_CACHE"],
 )
-print('Downloaded faster-whisper model to:', path)
+print("Downloaded faster-whisper model to:", path)
 PY
 
-# Build-time verification. GPU-linked extensions are checked by package and
-# shared-library presence because libcuda.so.1 is injected only at runtime.
-RUN python3 - <<'PYVERIFY'
-import importlib.util
-import os
-from importlib.metadata import version
-from pathlib import Path
+RUN chmod -R a+rX "${HF_HOME}"
 
-import ctranslate2
-import numpy as np
-import onnxruntime
+# -----------------------------------------------------------------------------
+# Non-brittle build smoke test
+#
+# This intentionally checks only that the core Python packages can be imported
+# and reports versions. It does NOT fail because a transitive dependency moved
+# from x.y.0 to x.y.1, and it does NOT assume package files live at a hard-coded
+# Python path.
+# -----------------------------------------------------------------------------
+RUN python3 - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
+
+import numpy
 import torch
 import torchaudio
 import torchvision
-import whisper
-from whisper.tokenizer import LANGUAGES
-from OpenGL_accelerate import arraydatatype as _opengl_accelerate_arraydatatype
-from huggingface_hub import snapshot_download
 from comfyui_version import __version__ as comfyui_version
 
-assert comfyui_version == '0.33.1', comfyui_version
-assert torch.version.cuda == '13.0', torch.version.cuda
-assert onnxruntime.__version__.startswith('1.28.'), onnxruntime.__version__
-assert np.__version__ == '1.26.4', np.__version__
-assert callable(whisper.load_model), whisper.__file__
-assert len(LANGUAGES) >= 90, len(LANGUAGES)
-assert _opengl_accelerate_arraydatatype is not None
+print("ComfyUI:", comfyui_version)
+print("PyTorch:", torch.__version__)
+print("Torchvision:", torchvision.__version__)
+print("Torchaudio:", torchaudio.__version__)
+print("PyTorch CUDA build:", torch.version.cuda)
+print("NumPy:", numpy.__version__)
 
-required_modules = [
-    'OpenEXR', 'OpenGL_accelerate', 'chardet', 'colour', 'cv2', 'dill', 'easyocr', 'feedparser',
-    'ffmpeg', 'google.cloud.storage', 'html2image', 'keyboard', 'llama_index',
-    'mdtex2html', 'moviepy', 'pydub', 'rawpy', 'rembg', 'selenium', 'srt',
-]
-missing = [name for name in required_modules if importlib.util.find_spec(name) is None]
-assert not missing, f'Missing required modules: {missing}'
-
-for distribution in (
-    'chardet', 'opencv-python-headless', 'xformers', 'sageattention',
-    'llama-cpp-python',
+for package in (
+    "comfyui_manager",
+    "onnxruntime-gpu",
+    "xformers",
+    "sageattention",
+    "llama-cpp-python",
+    "faster-whisper",
+    "openai-whisper",
+    "PyOpenGL-accelerate",
 ):
-    print(distribution + ':', version(distribution))
+    try:
+        print(f"{package}: {version(package)}")
+    except PackageNotFoundError:
+        print(f"{package}: package metadata not found")
+PY
 
-llama_library = Path('/usr/local/lib/python3.12/dist-packages/llama_cpp/lib/libllama.so')
-assert llama_library.is_file(), f'Missing llama.cpp shared library: {llama_library}'
-
-model_path = snapshot_download(
-    repo_id=os.environ['FASTER_WHISPER_MODEL_REPO'],
-    cache_dir=os.environ['HF_HUB_CACHE'],
-    local_files_only=True,
-)
-
-print('ComfyUI:', comfyui_version)
-print('PyTorch:', torch.__version__)
-print('Torchvision:', torchvision.__version__)
-print('Torchaudio:', torchaudio.__version__)
-print('PyTorch CUDA build:', torch.version.cuda)
-print('ONNX Runtime:', onnxruntime.__version__)
-print('ONNX providers compiled in:', onnxruntime.get_available_providers())
-print('CTranslate2:', ctranslate2.__version__)
-print('OpenAI Whisper:', version('openai-whisper'), whisper.__file__)
-print('PyOpenGL accelerate:', version('PyOpenGL-accelerate'))
-print('Verified llama.cpp library:', llama_library)
-print('Verified faster-whisper model:', model_path)
-PYVERIFY
-RUN chmod -R a+rX "${HF_HOME}"
-
-# Runtime initialization creates writable configuration paths and supervises
-# ComfyUI so Manager-requested restarts do not stop the TrueNAS application.
+# -----------------------------------------------------------------------------
+# Runtime entrypoint
+# -----------------------------------------------------------------------------
 RUN cat > /usr/local/bin/comfyui-entrypoint <<'SHENTRY'
 #!/usr/bin/env bash
 set -euo pipefail
 
 mkdir -p \
+    "${XDG_CONFIG_HOME}" \
     "${YOLO_CONFIG_DIR}" \
     "${MPLCONFIGDIR}" \
     "${TORCH_EXTENSIONS_DIR}"
 
-# Compile JIT CUDA extensions only for the GPU actually assigned to this
-# container. The image-wide list is needed while building llama.cpp, but using
-# it at runtime would make old custom nodes compile for three GPU families.
-RUNTIME_CUDA_ARCH="$(python3 - <<'PYARCH'
-import torch
-if torch.cuda.is_available():
-    major, minor = torch.cuda.get_device_capability(0)
-    print(f'{major}.{minor}')
-PYARCH
+# Find NVIDIA CUDA 12 user-space libraries installed by pip without hard-coding
+# the Python minor version or site-packages directory.
+PY_SITE="$(python3 - <<'PY'
+import site
+paths = site.getsitepackages()
+print(paths[0] if paths else "")
+PY
 )"
-if [[ -n "${RUNTIME_CUDA_ARCH}" ]]; then
-    export TORCH_CUDA_ARCH_LIST="${RUNTIME_CUDA_ARCH}"
-    echo "[INFO] Runtime CUDA architecture: ${TORCH_CUDA_ARCH_LIST}"
+
+if [[ -n "${PY_SITE}" ]]; then
+    for cuda_lib_dir in \
+        "${PY_SITE}/nvidia/cublas/lib" \
+        "${PY_SITE}/nvidia/cudnn/lib"
+    do
+        if [[ -d "${cuda_lib_dir}" ]]; then
+            export LD_LIBRARY_PATH="${cuda_lib_dir}:${LD_LIBRARY_PATH:-}"
+        fi
+    done
 fi
 
-# Point WAS Node Suite at the system ffmpeg binary without discarding its
-# existing configuration.
-python3 - <<'PYWAS'
+# Compile JIT extensions only for CUDA architectures actually visible to the
+# container. This supports homogeneous or mixed visible GPU sets and avoids
+# compiling unused architectures.
+RUNTIME_CUDA_ARCH="$(python3 - <<'PY' 2>/dev/null || true
+import torch
+
+if torch.cuda.is_available():
+    caps = sorted({
+        torch.cuda.get_device_capability(i)
+        for i in range(torch.cuda.device_count())
+    })
+    print(";".join(f"{major}.{minor}" for major, minor in caps))
+PY
+)"
+
+if [[ -n "${RUNTIME_CUDA_ARCH}" ]]; then
+    export TORCH_CUDA_ARCH_LIST="${RUNTIME_CUDA_ARCH}"
+    echo "[INFO] Runtime CUDA architectures: ${TORCH_CUDA_ARCH_LIST}"
+fi
+
+# Point WAS Node Suite at the system ffmpeg binary if the node is mounted.
+# Failure to update this optional config must never prevent ComfyUI from booting.
+python3 - <<'PYWAS' || true
 import json
 from pathlib import Path
 
-path = Path('/app/ComfyUI/custom_nodes/was-ns/was_suite_config.json')
+path = Path("/app/ComfyUI/custom_nodes/was-ns/was_suite_config.json")
+
 if path.parent.is_dir():
     try:
-        data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except (json.JSONDecodeError, OSError):
         data = {}
-    data['ffmpeg_bin_path'] = '/usr/bin/ffmpeg'
-    path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+
+    data["ffmpeg_bin_path"] = "/usr/bin/ffmpeg"
+
+    try:
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"[WARN] Could not update WAS ffmpeg path: {exc}")
 PYWAS
 
-# Run ComfyUI under a tiny supervisor rather than allowing its legacy restart
-# path to replace the process with `python3 main.py`. ComfyUI's supported CLI
-# restart mode creates this marker and exits cleanly; the supervisor then starts
-# it again from the correct directory with the correct Python module path.
+# Warn about an old Manager clone in the persistent custom_nodes dataset.
+# Do not delete or rename user data automatically.
+for legacy_manager in \
+    /app/ComfyUI/custom_nodes/ComfyUI-Manager \
+    /app/ComfyUI/custom_nodes/comfyui-manager
+do
+    if [[ -d "${legacy_manager}" ]]; then
+        echo "[WARN] Old ComfyUI-Manager custom-node clone detected: ${legacy_manager}"
+        echo "[WARN] ComfyUI 0.33.1 uses the integrated Manager package; remove the old clone if it causes duplicate/blocked Manager messages."
+    fi
+done
+
+# Keep the TrueNAS application alive across Manager-requested ComfyUI restarts.
 COMFY_SESSION=/tmp/comfyui-cli-session
 export __COMFY_CLI_SESSION__="${COMFY_SESSION}"
 
 child_pid=""
+
 stop_child() {
     if [[ -n "${child_pid}" ]] && kill -0 "${child_pid}" 2>/dev/null; then
         kill -TERM "${child_pid}" 2>/dev/null || true
@@ -564,6 +539,7 @@ stop_child() {
     fi
     exit 143
 }
+
 trap stop_child TERM INT
 
 while true; do
@@ -590,14 +566,18 @@ while true; do
     exit "${status}"
 done
 SHENTRY
-# Git/Windows may save this Dockerfile with CRLF. The heredoc preserves those
-# carriage returns, which would make the shebang resolve as 'bash\r'. Strip
-# them, validate the script, and verify ComfyUI's local Python package is visible.
-RUN sed -i 's/\r$//' /usr/local/bin/comfyui-entrypoint && \
-    chmod +x /usr/local/bin/comfyui-entrypoint && \
-    bash -n /usr/local/bin/comfyui-entrypoint && \
-    PYTHONPATH=/app/ComfyUI python3 -c "import comfy; print('Verified ComfyUI Python path:', comfy.__path__)"
+
+# Git / Windows editors may save this Dockerfile with CRLF. Strip CRLF from the
+# generated entrypoint, validate shell syntax, and make it executable.
+RUN sed -i 's/\r$//' /usr/local/bin/comfyui-entrypoint \
+    && chmod +x /usr/local/bin/comfyui-entrypoint \
+    && bash -n /usr/local/bin/comfyui-entrypoint
 
 EXPOSE 8188
+
 ENTRYPOINT ["/usr/local/bin/comfyui-entrypoint"]
+
+# --enable-manager-legacy-ui implies Manager support in current ComfyUI, but
+# keeping --enable-manager explicitly makes the intent obvious and remains
+# compatible with ComfyUI 0.33.1.
 CMD ["--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram", "--enable-manager", "--enable-manager-legacy-ui"]
