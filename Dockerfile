@@ -600,4 +600,4 @@ RUN sed -i 's/\r$//' /usr/local/bin/comfyui-entrypoint && \
 
 EXPOSE 8188
 ENTRYPOINT ["/usr/local/bin/comfyui-entrypoint"]
-CMD ["--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram", "--enable-manager"]
+CMD ["--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram", "--enable-manager", "--enable-manager-legacy-ui"]
