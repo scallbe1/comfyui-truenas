@@ -1,6 +1,9 @@
 FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
-ARG COMFYUI_VERSION=v0.33.1
+# v0.33.1 does NOT contain the native arbitrary-guide / Ref2VA merge support
+# required by ComfyUI-H3-Motion-Context-MultiRef. PR #15439 landed as e01fb4c.
+# Pin the exact commit for a reproducible build.
+ARG COMFYUI_REF=e01fb4c
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
 ARG TORCHAUDIO_VERSION=2.11.0
@@ -127,12 +130,55 @@ RUN python3 -m pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cu130
 
 # -----------------------------------------------------------------------------
-# ComfyUI 0.33.1 + integrated Manager
+# ComfyUI core + integrated Manager
+#
+# IMPORTANT:
+# ComfyUI-H3-Motion-Context-MultiRef requires the native MiniMax H3 arbitrary
+# guide / MultiRef merge support introduced by ComfyUI PR #15439.
+# v0.33.1 does not contain that commit, so use the exact H3-capable commit.
+#
+# --filter=blob:none keeps the Git checkout much smaller than a normal full
+# clone while retaining commit history, which lets an exact commit be checked
+# out reliably.
 # -----------------------------------------------------------------------------
-RUN git clone --depth 1 --branch "${COMFYUI_VERSION}" \
+RUN git clone --filter=blob:none \
         https://github.com/Comfy-Org/ComfyUI.git . \
+    && git checkout --detach "${COMFYUI_REF}" \
+    && git rev-parse HEAD | tee /opt/comfyui-git-commit.txt \
     && python3 -m pip install --no-cache-dir -r requirements.txt \
     && python3 -m pip install --no-cache-dir -r manager_requirements.txt
+
+# Fail the Docker build immediately if the checked-out ComfyUI core does not
+# actually expose the H3 capability required by the mounted MultiRef nodes.
+# This is intentionally a capability check rather than a ComfyUI version check.
+RUN python3 - <<'PYH3'
+import inspect
+
+from comfy.ldm.minimax.model import PackedLayout
+from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide
+
+params = inspect.signature(PackedLayout.__init__).parameters
+
+if "frame_count" in params:
+    raise RuntimeError(
+        "MiniMax H3 arbitrary-guide support is missing: "
+        "PackedLayout still has the legacy frame_count argument."
+    )
+
+required = {"keyframes", "refs"}
+missing = required.difference(params)
+if missing:
+    raise RuntimeError(
+        f"MiniMax H3 PackedLayout is missing required parameters: {sorted(missing)}"
+    )
+
+if MiniMaxH3AddGuide is None:
+    raise RuntimeError("MiniMaxH3AddGuide is unavailable.")
+
+print("MiniMax H3 PR #15439 capability check: PASS")
+print("PackedLayout:", inspect.signature(PackedLayout.__init__))
+print("MiniMaxH3AddGuide:", MiniMaxH3AddGuide.__name__)
+PYH3
 
 # -----------------------------------------------------------------------------
 # General custom-node dependencies
@@ -414,9 +460,14 @@ import numpy
 import torch
 import torchaudio
 import torchvision
+from pathlib import Path
 from comfyui_version import __version__ as comfyui_version
 
-print("ComfyUI:", comfyui_version)
+commit_file = Path("/opt/comfyui-git-commit.txt")
+comfyui_commit = commit_file.read_text(encoding="utf-8").strip() if commit_file.exists() else "unknown"
+
+print("ComfyUI reported version:", comfyui_version)
+print("ComfyUI git commit:", comfyui_commit)
 print("PyTorch:", torch.__version__)
 print("Torchvision:", torchvision.__version__)
 print("Torchaudio:", torchaudio.__version__)
@@ -522,7 +573,7 @@ for legacy_manager in \
 do
     if [[ -d "${legacy_manager}" ]]; then
         echo "[WARN] Old ComfyUI-Manager custom-node clone detected: ${legacy_manager}"
-        echo "[WARN] ComfyUI 0.33.1 uses the integrated Manager package; remove the old clone if it causes duplicate/blocked Manager messages."
+        echo "[WARN] This ComfyUI build uses the integrated Manager package; remove the old clone if it causes duplicate/blocked Manager messages."
     fi
 done
 
@@ -578,6 +629,5 @@ EXPOSE 8188
 ENTRYPOINT ["/usr/local/bin/comfyui-entrypoint"]
 
 # --enable-manager-legacy-ui implies Manager support in current ComfyUI, but
-# keeping --enable-manager explicitly makes the intent obvious and remains
-# compatible with ComfyUI 0.33.1.
+# keeping --enable-manager explicitly makes the intent obvious.
 CMD ["--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram", "--enable-manager", "--enable-manager-legacy-ui"]
