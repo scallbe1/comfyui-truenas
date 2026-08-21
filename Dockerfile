@@ -148,36 +148,83 @@ RUN git clone --filter=blob:none \
     && python3 -m pip install --no-cache-dir -r requirements.txt \
     && python3 -m pip install --no-cache-dir -r manager_requirements.txt
 
-# Fail the Docker build immediately if the checked-out ComfyUI core does not
-# actually expose the H3 capability required by the mounted MultiRef nodes.
-# This is intentionally a capability check rather than a ComfyUI version check.
+# Fail the Docker build immediately if the checked-out source does not contain
+# the H3 capability required by ComfyUI-H3-Motion-Context-MultiRef.
+#
+# IMPORTANT: this intentionally parses the source with Python's AST instead of
+# importing comfy_extras.nodes_minimax_h3. Importing that module during image
+# construction initializes a large part of ComfyUI and can produce unrelated
+# build-time failures even when the required H3 code is present.
 RUN python3 - <<'PYH3'
-import inspect
+import ast
+from pathlib import Path
 
-from comfy.ldm.minimax.model import PackedLayout
-from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide
+model_path = Path("/app/ComfyUI/comfy/ldm/minimax/model.py")
+nodes_path = Path("/app/ComfyUI/comfy_extras/nodes_minimax_h3.py")
+base_path = Path("/app/ComfyUI/comfy/model_base.py")
 
-params = inspect.signature(PackedLayout.__init__).parameters
+for path in (model_path, nodes_path, base_path):
+    if not path.is_file():
+        raise RuntimeError(f"Required ComfyUI source file missing: {path}")
 
-if "frame_count" in params:
+model_tree = ast.parse(model_path.read_text(encoding="utf-8"), filename=str(model_path))
+nodes_tree = ast.parse(nodes_path.read_text(encoding="utf-8"), filename=str(nodes_path))
+
+# PR #15439 changes PackedLayout.__init__ so arbitrary guides no longer depend
+# on the old frame_count/first-or-last-only keyframe implementation.
+packed_init = None
+for node in model_tree.body:
+    if isinstance(node, ast.ClassDef) and node.name == "PackedLayout":
+        for item in node.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__":
+                packed_init = item
+                break
+        break
+
+if packed_init is None:
+    raise RuntimeError("Could not find PackedLayout.__init__ in MiniMax H3 model.py")
+
+args = [a.arg for a in packed_init.args.args]
+if "frame_count" in args:
     raise RuntimeError(
-        "MiniMax H3 arbitrary-guide support is missing: "
-        "PackedLayout still has the legacy frame_count argument."
+        "MiniMax H3 PR #15439 capability is missing: "
+        "PackedLayout.__init__ still contains legacy frame_count."
     )
 
-required = {"keyframes", "refs"}
-missing = required.difference(params)
-if missing:
+for required in ("keyframes", "refs"):
+    if required not in args:
+        raise RuntimeError(
+            f"MiniMax H3 PackedLayout.__init__ is missing required argument: {required}"
+        )
+
+node_classes = {
+    node.name
+    for node in nodes_tree.body
+    if isinstance(node, ast.ClassDef)
+}
+if "MiniMaxH3AddGuide" not in node_classes:
     raise RuntimeError(
-        f"MiniMax H3 PackedLayout is missing required parameters: {sorted(missing)}"
+        "MiniMaxH3AddGuide is missing from comfy_extras/nodes_minimax_h3.py"
     )
 
-if MiniMaxH3AddGuide is None:
-    raise RuntimeError("MiniMaxH3AddGuide is unavailable.")
+# PR #15439 also fixes Ref2VA + guide merging. Check the source contains the
+# append/merge behavior rather than overwriting guide conditioning.
+base_source = base_path.read_text(encoding="utf-8")
+required_fragments = (
+    'payload.get("cond_video_latents", []) +',
+    'payload.get("cond_audio_latents", []) +',
+)
+for fragment in required_fragments:
+    if fragment not in base_source:
+        raise RuntimeError(
+            "MiniMax H3 Ref2VA/guide merge support is incomplete; "
+            f"missing source fragment: {fragment}"
+        )
 
-print("MiniMax H3 PR #15439 capability check: PASS")
-print("PackedLayout:", inspect.signature(PackedLayout.__init__))
-print("MiniMaxH3AddGuide:", MiniMaxH3AddGuide.__name__)
+print("MiniMax H3 PR #15439 source capability check: PASS")
+print("PackedLayout args:", args)
+print("MiniMaxH3AddGuide: present")
+print("Ref2VA + guide latent merge: present")
 PYH3
 
 # -----------------------------------------------------------------------------
