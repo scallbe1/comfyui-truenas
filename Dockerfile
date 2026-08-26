@@ -1,9 +1,10 @@
 FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
-# v0.33.1 does NOT contain the native arbitrary-guide / Ref2VA merge support
-# required by ComfyUI-H3-Motion-Context-MultiRef. PR #15439 landed as e01fb4c.
-# Pin the exact commit for a reproducible build.
-ARG COMFYUI_REF=e01fb4c
+# ComfyUI 0.34.0 contains native arbitrary-frame MiniMax H3 image/video/audio
+# guides, Ref2VA guide merging, per-token AV latent noise masks, taeh3 preview
+# support, prompt embeddings, and the missing H3 tokenizer special-token fix.
+# Pin the immutable release tag for reproducible GitHub Actions / GHCR builds.
+ARG COMFYUI_REF=v0.34.0
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
 ARG TORCHAUDIO_VERSION=2.11.0
@@ -109,6 +110,7 @@ RUN printf '%s\n' \
         'torch==2.11.0' \
         'torchvision==0.26.0' \
         'torchaudio==2.11.0' \
+        'av==17.0.0' \
         > /opt/pip-constraints.txt
 
 ENV PIP_CONSTRAINT=/opt/pip-constraints.txt
@@ -134,8 +136,8 @@ RUN python3 -m pip install --no-cache-dir \
 #
 # IMPORTANT:
 # ComfyUI-H3-Motion-Context-MultiRef requires the native MiniMax H3 arbitrary
-# guide / MultiRef merge support introduced by ComfyUI PR #15439.
-# v0.33.1 does not contain that commit, so use the exact H3-capable commit.
+# guide / MultiRef merge support introduced by ComfyUI PR #15439 and included
+# in ComfyUI 0.34.0.
 #
 # --filter=blob:none keeps the Git checkout much smaller than a normal full
 # clone while retaining commit history, which lets an exact commit be checked
@@ -162,8 +164,10 @@ from pathlib import Path
 model_path = Path("/app/ComfyUI/comfy/ldm/minimax/model.py")
 nodes_path = Path("/app/ComfyUI/comfy_extras/nodes_minimax_h3.py")
 base_path = Path("/app/ComfyUI/comfy/model_base.py")
+tokenizer_path = Path("/app/ComfyUI/comfy/text_encoders/minimax.py")
+sd_path = Path("/app/ComfyUI/comfy/sd.py")
 
-for path in (model_path, nodes_path, base_path):
+for path in (model_path, nodes_path, base_path, tokenizer_path, sd_path):
     if not path.is_file():
         raise RuntimeError(f"Required ComfyUI source file missing: {path}")
 
@@ -221,10 +225,24 @@ for fragment in required_fragments:
             f"missing source fragment: {fragment}"
         )
 
-print("MiniMax H3 PR #15439 source capability check: PASS")
+# ComfyUI 0.34.0 fixes H3 dialogue/lyrics/caption markers that older builds
+# incorrectly expanded into accumulating junk tokens.
+tokenizer_source = tokenizer_path.read_text(encoding="utf-8")
+for token in ("<d>", "</d>", "<|lyrics_start|>", "<|lyrics_end|>",
+              "<|caption_start|>", "<|caption_end|>"):
+    if token not in tokenizer_source:
+        raise RuntimeError(f"MiniMax H3 tokenizer special token missing: {token}")
+
+# taeh3 is the lightweight H3 preview decoder added in ComfyUI 0.34.0.
+if "taeh3" not in sd_path.read_text(encoding="utf-8"):
+    raise RuntimeError("ComfyUI 0.34.0 taeh3 preview support is missing")
+
+print("ComfyUI 0.34.0 MiniMax H3 capability checks: PASS")
 print("PackedLayout args:", args)
 print("MiniMaxH3AddGuide: present")
 print("Ref2VA + guide latent merge: present")
+print("H3 tokenizer special tokens: present")
+print("taeh3 preview support: present")
 PYH3
 
 # -----------------------------------------------------------------------------
@@ -259,7 +277,7 @@ RUN python3 -m pip install --no-cache-dir \
     sentencepiece \
     transformers \
     accelerate \
-    av \
+    "av==17.0.0" \
     einops \
     scikit-image \
     peft \
@@ -503,6 +521,7 @@ RUN chmod -R a+rX "${HF_HOME}"
 RUN python3 - <<'PY'
 from importlib.metadata import PackageNotFoundError, version
 
+import av
 import numpy
 import torch
 import torchaudio
@@ -513,8 +532,16 @@ from comfyui_version import __version__ as comfyui_version
 commit_file = Path("/opt/comfyui-git-commit.txt")
 comfyui_commit = commit_file.read_text(encoding="utf-8").strip() if commit_file.exists() else "unknown"
 
+if comfyui_version != "0.34.0":
+    raise RuntimeError(f"Expected ComfyUI 0.34.0, got {comfyui_version}")
+
+av_major = int(av.__version__.split(".", 1)[0])
+if av_major < 17:
+    raise RuntimeError(f"ComfyUI 0.34.0 requires PyAV 17+, got {av.__version__}")
+
 print("ComfyUI reported version:", comfyui_version)
 print("ComfyUI git commit:", comfyui_commit)
+print("PyAV:", av.__version__)
 print("PyTorch:", torch.__version__)
 print("Torchvision:", torchvision.__version__)
 print("Torchaudio:", torchaudio.__version__)
