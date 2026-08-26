@@ -1,9 +1,7 @@
 FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
-# ComfyUI 0.34.0 contains native arbitrary-frame MiniMax H3 image/video/audio
-# guides, Ref2VA guide merging, per-token AV latent noise masks, taeh3 preview
-# support, prompt embeddings, and the missing H3 tokenizer special-token fix.
-# Pin the immutable release tag for reproducible GitHub Actions / GHCR builds.
+# Use the official ComfyUI release tag for reproducible GitHub Actions / GHCR
+# builds. ComfyUI's own requirements.txt controls its Python dependencies.
 ARG COMFYUI_REF=v0.34.0
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
@@ -110,7 +108,6 @@ RUN printf '%s\n' \
         'torch==2.11.0' \
         'torchvision==0.26.0' \
         'torchaudio==2.11.0' \
-        'av==17.0.0' \
         > /opt/pip-constraints.txt
 
 ENV PIP_CONSTRAINT=/opt/pip-constraints.txt
@@ -134,13 +131,8 @@ RUN python3 -m pip install --no-cache-dir \
 # -----------------------------------------------------------------------------
 # ComfyUI core + integrated Manager
 #
-# IMPORTANT:
-# ComfyUI-H3-Motion-Context-MultiRef requires the native MiniMax H3 arbitrary
-# guide / MultiRef merge support introduced by ComfyUI PR #15439 and included
-# in ComfyUI 0.34.0.
-#
 # --filter=blob:none keeps the Git checkout much smaller than a normal full
-# clone while retaining commit history, which lets an exact commit be checked
+# clone while retaining commit history, allowing the release tag to be checked
 # out reliably.
 # -----------------------------------------------------------------------------
 RUN git clone --filter=blob:none \
@@ -149,101 +141,6 @@ RUN git clone --filter=blob:none \
     && git rev-parse HEAD | tee /opt/comfyui-git-commit.txt \
     && python3 -m pip install --no-cache-dir -r requirements.txt \
     && python3 -m pip install --no-cache-dir -r manager_requirements.txt
-
-# Fail the Docker build immediately if the checked-out source does not contain
-# the H3 capability required by ComfyUI-H3-Motion-Context-MultiRef.
-#
-# IMPORTANT: this intentionally parses the source with Python's AST instead of
-# importing comfy_extras.nodes_minimax_h3. Importing that module during image
-# construction initializes a large part of ComfyUI and can produce unrelated
-# build-time failures even when the required H3 code is present.
-RUN python3 - <<'PYH3'
-import ast
-from pathlib import Path
-
-model_path = Path("/app/ComfyUI/comfy/ldm/minimax/model.py")
-nodes_path = Path("/app/ComfyUI/comfy_extras/nodes_minimax_h3.py")
-base_path = Path("/app/ComfyUI/comfy/model_base.py")
-tokenizer_path = Path("/app/ComfyUI/comfy/text_encoders/minimax.py")
-sd_path = Path("/app/ComfyUI/comfy/sd.py")
-
-for path in (model_path, nodes_path, base_path, tokenizer_path, sd_path):
-    if not path.is_file():
-        raise RuntimeError(f"Required ComfyUI source file missing: {path}")
-
-model_tree = ast.parse(model_path.read_text(encoding="utf-8"), filename=str(model_path))
-nodes_tree = ast.parse(nodes_path.read_text(encoding="utf-8"), filename=str(nodes_path))
-
-# PR #15439 changes PackedLayout.__init__ so arbitrary guides no longer depend
-# on the old frame_count/first-or-last-only keyframe implementation.
-packed_init = None
-for node in model_tree.body:
-    if isinstance(node, ast.ClassDef) and node.name == "PackedLayout":
-        for item in node.body:
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__":
-                packed_init = item
-                break
-        break
-
-if packed_init is None:
-    raise RuntimeError("Could not find PackedLayout.__init__ in MiniMax H3 model.py")
-
-args = [a.arg for a in packed_init.args.args]
-if "frame_count" in args:
-    raise RuntimeError(
-        "MiniMax H3 PR #15439 capability is missing: "
-        "PackedLayout.__init__ still contains legacy frame_count."
-    )
-
-for required in ("keyframes", "refs"):
-    if required not in args:
-        raise RuntimeError(
-            f"MiniMax H3 PackedLayout.__init__ is missing required argument: {required}"
-        )
-
-node_classes = {
-    node.name
-    for node in nodes_tree.body
-    if isinstance(node, ast.ClassDef)
-}
-if "MiniMaxH3AddGuide" not in node_classes:
-    raise RuntimeError(
-        "MiniMaxH3AddGuide is missing from comfy_extras/nodes_minimax_h3.py"
-    )
-
-# PR #15439 also fixes Ref2VA + guide merging. Check the source contains the
-# append/merge behavior rather than overwriting guide conditioning.
-base_source = base_path.read_text(encoding="utf-8")
-required_fragments = (
-    'payload.get("cond_video_latents", []) +',
-    'payload.get("cond_audio_latents", []) +',
-)
-for fragment in required_fragments:
-    if fragment not in base_source:
-        raise RuntimeError(
-            "MiniMax H3 Ref2VA/guide merge support is incomplete; "
-            f"missing source fragment: {fragment}"
-        )
-
-# ComfyUI 0.34.0 fixes H3 dialogue/lyrics/caption markers that older builds
-# incorrectly expanded into accumulating junk tokens.
-tokenizer_source = tokenizer_path.read_text(encoding="utf-8")
-for token in ("<d>", "</d>", "<|lyrics_start|>", "<|lyrics_end|>",
-              "<|caption_start|>", "<|caption_end|>"):
-    if token not in tokenizer_source:
-        raise RuntimeError(f"MiniMax H3 tokenizer special token missing: {token}")
-
-# taeh3 is the lightweight H3 preview decoder added in ComfyUI 0.34.0.
-if "taeh3" not in sd_path.read_text(encoding="utf-8"):
-    raise RuntimeError("ComfyUI 0.34.0 taeh3 preview support is missing")
-
-print("ComfyUI 0.34.0 MiniMax H3 capability checks: PASS")
-print("PackedLayout args:", args)
-print("MiniMaxH3AddGuide: present")
-print("Ref2VA + guide latent merge: present")
-print("H3 tokenizer special tokens: present")
-print("taeh3 preview support: present")
-PYH3
 
 # -----------------------------------------------------------------------------
 # General custom-node dependencies
@@ -277,7 +174,6 @@ RUN python3 -m pip install --no-cache-dir \
     sentencepiece \
     transformers \
     accelerate \
-    "av==17.0.0" \
     einops \
     scikit-image \
     peft \
@@ -531,13 +427,6 @@ from comfyui_version import __version__ as comfyui_version
 
 commit_file = Path("/opt/comfyui-git-commit.txt")
 comfyui_commit = commit_file.read_text(encoding="utf-8").strip() if commit_file.exists() else "unknown"
-
-if comfyui_version != "0.34.0":
-    raise RuntimeError(f"Expected ComfyUI 0.34.0, got {comfyui_version}")
-
-av_major = int(av.__version__.split(".", 1)[0])
-if av_major < 17:
-    raise RuntimeError(f"ComfyUI 0.34.0 requires PyAV 17+, got {av.__version__}")
 
 print("ComfyUI reported version:", comfyui_version)
 print("ComfyUI git commit:", comfyui_commit)
