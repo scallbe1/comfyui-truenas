@@ -309,6 +309,20 @@ RUN python3 -m pip install --no-cache-dir --upgrade \
     nvidia-vfx
 
 # -----------------------------------------------------------------------------
+# SeedVR2 — keep the image-owned code outside the TrueNAS custom_nodes mount.
+# Install requirements using the same Python and compute constraints as ComfyUI.
+# Use the headless OpenCV distribution already used by this server.
+# -----------------------------------------------------------------------------
+RUN git clone --depth 1 \
+        https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git \
+        /opt/ComfyUI-SeedVR2_VideoUpscaler \
+    && sed 's/^opencv-python$/opencv-python-headless/' \
+        /opt/ComfyUI-SeedVR2_VideoUpscaler/requirements.txt \
+        > /opt/seedvr2-requirements.txt \
+    && python3 -m pip install --no-cache-dir -r /opt/seedvr2-requirements.txt \
+    && test -f /opt/ComfyUI-SeedVR2_VideoUpscaler/inference_cli.py
+
+# -----------------------------------------------------------------------------
 # Re-establish the critical numerical / PyTorch stack after broad dependencies.
 # This is intentional: custom-node packages are allowed to resolve their own
 # dependencies, then the known-good compute stack is restored once at the end.
@@ -465,6 +479,26 @@ mkdir -p \
     "${YOLO_CONFIG_DIR}" \
     "${MPLCONFIGDIR}" \
     "${TORCH_EXTENSIONS_DIR}"
+
+# Expose SeedVR2 after TrueNAS has mounted the persistent custom_nodes dataset.
+# The stable symlink points at the code shipped with the running image, so a
+# rebuilt image also updates SeedVR2 without runtime git or pip operations.
+SEEDVR2_IMAGE_DIR=/opt/ComfyUI-SeedVR2_VideoUpscaler
+SEEDVR2_NODE_DIR=/app/ComfyUI/custom_nodes/ComfyUI-SeedVR2_VideoUpscaler
+mkdir -p /app/ComfyUI/custom_nodes /app/ComfyUI/models/SEEDVR2
+
+if [[ ! -L "${SEEDVR2_NODE_DIR}" ]] || [[ "$(readlink "${SEEDVR2_NODE_DIR}")" != "${SEEDVR2_IMAGE_DIR}" ]]; then
+    if [[ -e "${SEEDVR2_NODE_DIR}" || -L "${SEEDVR2_NODE_DIR}" ]]; then
+        SEEDVR2_BACKUP_ROOT=/app/ComfyUI/user/custom-node-backups
+        mkdir -p "${SEEDVR2_BACKUP_ROOT}"
+        SEEDVR2_BACKUP="${SEEDVR2_BACKUP_ROOT}/ComfyUI-SeedVR2_VideoUpscaler-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+        mv "${SEEDVR2_NODE_DIR}" "${SEEDVR2_BACKUP}"
+        echo "[INFO] Existing SeedVR2 installation backed up to ${SEEDVR2_BACKUP}"
+    fi
+    ln -s "${SEEDVR2_IMAGE_DIR}" "${SEEDVR2_NODE_DIR}"
+fi
+
+echo "[INFO] SeedVR2 ready at ${SEEDVR2_NODE_DIR}; models persist in /app/ComfyUI/models/SEEDVR2"
 
 # Find NVIDIA CUDA 12 user-space libraries installed by pip without hard-coding
 # the Python minor version or site-packages directory.
