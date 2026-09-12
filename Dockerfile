@@ -2,7 +2,7 @@ FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
 # Use the official ComfyUI release tag for reproducible GitHub Actions / GHCR
 # builds. ComfyUI's own requirements.txt controls its Python dependencies.
-ARG COMFYUI_REF=v0.34.0
+ARG COMFYUI_REF=v0.35.0
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
 ARG TORCHAUDIO_VERSION=2.11.0
@@ -392,16 +392,19 @@ RUN python3 -m pip uninstall -y \
 # -----------------------------------------------------------------------------
 # ONNX Runtime
 #
-# Some custom-node dependencies install the CPU `onnxruntime` distribution,
-# while others expect `onnxruntime-gpu`. Both provide the same Python import
-# name and installing both can overwrite files unpredictably.
+# Some custom-node dependencies (including face/InsightFace-related nodes) can
+# install the CPU `onnxruntime` distribution, while others expect
+# `onnxruntime-gpu`. Both provide the same Python import name and installing
+# both can overwrite files unpredictably.
 #
-# Resolve that once, at the END of dependency installation. We intentionally
-# use a compatible range rather than asserting one exact transitive version.
+# Resolve that once, at the END of dependency installation. ORT 1.30.0 is the
+# CUDA-capable build verified with this CUDA 13 / Python 3.12 image and ZenID.
+# Keep only the GPU distribution so CUDAExecutionProvider cannot be shadowed by
+# the CPU wheel.
 # -----------------------------------------------------------------------------
 RUN python3 -m pip uninstall -y onnxruntime onnxruntime-gpu || true \
     && python3 -m pip install --no-cache-dir \
-        "onnxruntime-gpu>=1.28,<1.30"
+        "onnxruntime-gpu==1.30.0"
 
 # -----------------------------------------------------------------------------
 # Bake faster-whisper large-v3 into the image
@@ -433,6 +436,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 import av
 import numpy
+import onnxruntime as ort
 import torch
 import torchaudio
 import torchvision
@@ -450,6 +454,22 @@ print("Torchvision:", torchvision.__version__)
 print("Torchaudio:", torchaudio.__version__)
 print("PyTorch CUDA build:", torch.version.cuda)
 print("NumPy:", numpy.__version__)
+print("ONNX Runtime:", ort.__version__)
+print("ONNX Runtime providers:", ort.get_available_providers())
+
+if "CUDAExecutionProvider" not in ort.get_available_providers():
+    raise SystemExit("ERROR: ONNX Runtime CUDAExecutionProvider is unavailable")
+
+try:
+    cpu_ort = version("onnxruntime")
+except PackageNotFoundError:
+    cpu_ort = None
+
+if cpu_ort is not None:
+    raise SystemExit(
+        f"ERROR: CPU onnxruntime distribution is installed ({cpu_ort}); "
+        "only onnxruntime-gpu should remain"
+    )
 
 for package in (
     "comfyui_manager",
