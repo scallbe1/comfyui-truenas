@@ -2,7 +2,7 @@ FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
 # Use the official ComfyUI release tag for reproducible GitHub Actions / GHCR
 # builds. ComfyUI's own requirements.txt controls its Python dependencies.
-ARG COMFYUI_REF=v0.35.0
+ARG COMFYUI_REF=v0.36.0
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
 ARG TORCHAUDIO_VERSION=2.11.0
@@ -323,6 +323,16 @@ RUN git clone --depth 1 \
     && test -f /opt/ComfyUI-SeedVR2_VideoUpscaler/inference_cli.py
 
 # -----------------------------------------------------------------------------
+# MiniMax H3 PDD Acc — keep image-owned code outside the TrueNAS custom_nodes
+# mount, then expose it at runtime with a stable symlink. PDD model files are
+# intentionally NOT baked into the image; place them in models/pdd_acc on the
+# persistent models dataset.
+# -----------------------------------------------------------------------------
+RUN git clone --depth 1 \
+        https://github.com/Jalen-Brunson/ComfyUI-MiniMax-H3-PDD-Acc.git \
+        /opt/ComfyUI-MiniMax-H3-PDD-Acc
+
+# -----------------------------------------------------------------------------
 # Re-establish the critical numerical / PyTorch stack after broad dependencies.
 # This is intentional: custom-node packages are allowed to resolve their own
 # dependencies, then the known-good compute stack is restored once at the end.
@@ -519,6 +529,26 @@ if [[ ! -L "${SEEDVR2_NODE_DIR}" ]] || [[ "$(readlink "${SEEDVR2_NODE_DIR}")" !=
 fi
 
 echo "[INFO] SeedVR2 ready at ${SEEDVR2_NODE_DIR}; models persist in /app/ComfyUI/models/SEEDVR2"
+
+# Expose MiniMax H3 PDD Acc after the persistent custom_nodes dataset is mounted.
+# This mirrors the SeedVR2 image-owned-code pattern so container rebuilds update
+# the node without overwriting the user's persistent custom-node dataset.
+PDD_IMAGE_DIR=/opt/ComfyUI-MiniMax-H3-PDD-Acc
+PDD_NODE_DIR=/app/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-PDD-Acc
+mkdir -p /app/ComfyUI/models/pdd_acc
+
+if [[ ! -L "${PDD_NODE_DIR}" ]] || [[ "$(readlink "${PDD_NODE_DIR}")" != "${PDD_IMAGE_DIR}" ]]; then
+    if [[ -e "${PDD_NODE_DIR}" || -L "${PDD_NODE_DIR}" ]]; then
+        PDD_BACKUP_ROOT=/app/ComfyUI/user/custom-node-backups
+        mkdir -p "${PDD_BACKUP_ROOT}"
+        PDD_BACKUP="${PDD_BACKUP_ROOT}/ComfyUI-MiniMax-H3-PDD-Acc-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+        mv "${PDD_NODE_DIR}" "${PDD_BACKUP}"
+        echo "[INFO] Existing MiniMax H3 PDD Acc installation backed up to ${PDD_BACKUP}"
+    fi
+    ln -s "${PDD_IMAGE_DIR}" "${PDD_NODE_DIR}"
+fi
+
+echo "[INFO] MiniMax H3 PDD Acc ready at ${PDD_NODE_DIR}; PDD models persist in /app/ComfyUI/models/pdd_acc"
 
 # Find NVIDIA CUDA 12 user-space libraries installed by pip without hard-coding
 # the Python minor version or site-packages directory.
