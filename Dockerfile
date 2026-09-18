@@ -6,7 +6,7 @@ ARG COMFYUI_REF=v0.36.0
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
 ARG TORCHAUDIO_VERSION=2.11.0
-ARG LLAMA_CPP_PYTHON_VERSION=0.3.34
+ARG LLAMA_CPP_PYTHON_REF=34c1bfbce3ad485d31e67039fa9200e6ab49882e
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
@@ -360,20 +360,6 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
     "sageattention==1.0.6"
 
 # -----------------------------------------------------------------------------
-# llama-cpp-python
-#
-# Prefer the project's official CUDA 13 wheel. If pip cannot find that wheel,
-# --prefer-binary still permits a source fallback using the CUDA build flags
-# below rather than depending on a hard-coded installed-library path.
-# -----------------------------------------------------------------------------
-RUN CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=86;89;120" \
-    FORCE_CMAKE=1 \
-    python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
-        --prefer-binary \
-        "llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION}" \
-        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130
-
-# -----------------------------------------------------------------------------
 # faster-whisper / CTranslate2
 #
 # CTranslate2 currently relies on CUDA 12 user-space libraries. Those can live
@@ -415,6 +401,33 @@ RUN python3 -m pip uninstall -y \
 RUN python3 -m pip uninstall -y onnxruntime onnxruntime-gpu || true \
     && python3 -m pip install --no-cache-dir \
         "onnxruntime-gpu==1.30.0"
+
+# -----------------------------------------------------------------------------
+# llama-cpp-python 0.3.49 -- CUDA 13 / RTX 3090
+#
+# The standard/prebuilt package previously pulled CUDA 12 runtime libraries and
+# reported GPU offload unavailable in this CUDA 13 image. Build the JamePeng
+# fork from source against the CUDA 13 toolkit already present in the image.
+#
+# Keep this AFTER all other pip dependency installation so a custom-node
+# requirement cannot replace the working CUDA build during image construction.
+# SM 8.6 targets the RTX 3090 used by this TrueNAS host and keeps build time
+# lower than compiling extra GPU architectures that this server does not use.
+# -----------------------------------------------------------------------------
+RUN python3 -m pip uninstall -y llama-cpp-python llama_cpp_python || true \
+    && rm -rf /tmp/llama-cpp-python \
+    && git clone --filter=blob:none --no-checkout \
+        https://github.com/JamePeng/llama-cpp-python.git \
+        /tmp/llama-cpp-python \
+    && cd /tmp/llama-cpp-python \
+    && git checkout --detach "${LLAMA_CPP_PYTHON_REF}" \
+    && git submodule update --init --recursive \
+    && CMAKE_ARGS="-DGGML_CUDA=ON -DGGML_BACKEND_DL=OFF -DCMAKE_CUDA_ARCHITECTURES=86" \
+       FORCE_CMAKE=1 \
+       CUDACXX=/usr/local/cuda/bin/nvcc \
+       python3 -m pip install --no-cache-dir --no-deps --force-reinstall . \
+    && cd / \
+    && rm -rf /tmp/llama-cpp-python
 
 # -----------------------------------------------------------------------------
 # Bake faster-whisper large-v3 into the image
