@@ -1,35 +1,39 @@
 # ComfyUI for TrueNAS
 
-This repository provides a containerized ComfyUI environment for TrueNAS SCALE. The image was updated in August 2026 and is based on Ubuntu 24.04 with CUDA 13.0.3 and cuDNN support.
+This repository provides a containerized ComfyUI environment for TrueNAS SCALE. The current image targets **ComfyUI v0.36.0** on Ubuntu 24.04 with CUDA 13.0.3 and cuDNN support.
 
-It includes Python and system dependencies for a broad range of ComfyUI image, video, audio, music, speech-to-text, local-LLM, and utility custom nodes.
+It includes Python and system dependencies for a broad range of ComfyUI image, video, audio, music, speech-to-text, local-LLM, and utility custom nodes, with particular support for current MiniMax H3 workflows.
 
 ## Included Platform
 
-- ComfyUI pinned to Git commit `e01fb4c`
-  - Includes the native MiniMax H3 arbitrary-guide / MultiRef support introduced by ComfyUI PR #15439
-  - Required by current `ComfyUI-H3-Motion-Context-MultiRef` workflows that combine Ref2VA references, H3 guide/keyframe conditioning, continuation video latents, and audio latents
+- **ComfyUI v0.36.0**
+  - Includes the native MiniMax H3 guide / MultiRef support required by current H3 Motion Context workflows
+  - Includes the v0.36 MiniMax H3 VAE optimizations and reduced H3 VAE memory usage
+  - Uses the current integrated ComfyUI Manager
 - Python 3.12
 - PyTorch 2.11.0 with CUDA 13.0
 - Torchvision 0.26.0
 - Torchaudio 2.11.0
 - xFormers 0.0.35
 - SageAttention 1.0.6
-- ONNX Runtime GPU 1.28.x
-- llama-cpp-python 0.3.34 with CUDA GPU offload
+- ONNX Runtime GPU 1.30.0
+- llama-cpp-python 0.3.49 (JamePeng fork), built from source against CUDA 13 with GPU offload
 - faster-whisper with the `large-v3` model included in the image
 - FFmpeg
 - Google Chrome
 - OpenGL, audio, vision, document-processing, and LLM dependencies
-- Integrated ComfyUI Manager support
+- SeedVR2 Video Upscaler
+- MiniMax H3 PDD Acc custom nodes
 
-The image includes CUDA support for:
+The base CUDA/PyTorch image includes CUDA support for:
 
 - NVIDIA RTX 3090 and other SM 8.6 GPUs
 - NVIDIA RTX 4090 and other SM 8.9 GPUs
 - NVIDIA RTX 5090-class SM 12.0 GPUs
 
-TrueNAS must have a working NVIDIA driver that supports the CUDA 13.0 container stack and the installed GPU.
+The `llama-cpp-python` backend in this build is deliberately compiled for **SM 8.6 / RTX 3090**, matching the current TrueNAS host and avoiding unnecessary multi-architecture compile time. If this image is moved to a different GPU architecture, change `CMAKE_CUDA_ARCHITECTURES` in the llama-cpp build block.
+
+The current TrueNAS host configuration used with this image is an RTX 3090 with NVIDIA driver `580.173.02`, which reports CUDA 13.0 support.
 
 ## Important Setup Notes
 
@@ -72,11 +76,11 @@ The persistent Hugging Face cache is mapped as:
 - /mnt/pool1/comfyui-huggingface:/opt/huggingface
 ```
 
-When this mount is enabled, the TrueNAS dataset becomes the container's persistent Hugging Face cache. This is useful for large model downloads because downloaded models survive container replacement.
+When this mount is enabled, the TrueNAS dataset becomes the container's persistent Hugging Face cache. Downloaded models therefore survive container replacement.
 
-Because a host mount replaces the contents of the same path inside the image, an initially empty `comfyui-huggingface` dataset will hide any Hugging Face cache that was baked into the container image. Models can then be downloaded into the persistent dataset as they are required.
+Because a host mount replaces the contents of the same path inside the image, an initially empty `comfyui-huggingface` dataset hides any Hugging Face cache baked into the container image. Models can then be downloaded into the persistent dataset as required.
 
-If you prefer to use only the Hugging Face files baked into the image, remove the `/opt/huggingface` volume mapping.
+If you prefer to use only Hugging Face files baked into the image, remove the `/opt/huggingface` volume mapping.
 
 ### Hugging Face Configuration
 
@@ -99,7 +103,7 @@ Do **not** commit a real Hugging Face token to this repository. Keep the actual 
 
 The remaining Hugging Face variables keep downloaded files under the persistent `/opt/huggingface` cache and increase the download timeout for large model files.
 
-### Persistent Custom Nodes
+## Persistent Custom Nodes
 
 The `/app/ComfyUI/custom_nodes` directory is mounted from TrueNAS:
 
@@ -107,23 +111,112 @@ The `/app/ComfyUI/custom_nodes` directory is mounted from TrueNAS:
 - /mnt/pool1/comfyui-customnodes:/app/ComfyUI/custom_nodes
 ```
 
-Custom nodes installed through ComfyUI Manager or manually added to this dataset therefore survive container replacement.
+Custom nodes installed through ComfyUI Manager or manually added to this dataset survive container replacement.
+
+Some custom nodes are intentionally shipped as **image-owned code under `/opt`** and exposed into the mounted `custom_nodes` directory with runtime symlinks. This allows a rebuilt container image to update those nodes without overwriting the rest of the persistent custom-node dataset.
+
+The image currently manages these nodes this way:
+
+- `ComfyUI-SeedVR2_VideoUpscaler`
+- `ComfyUI-MiniMax-H3-PDD-Acc`
+
+If a normal directory with either name already exists in the persistent `custom_nodes` dataset, the entrypoint moves it into:
+
+```text
+/app/ComfyUI/user/custom-node-backups/
+```
+
+and then creates the image-owned symlink.
 
 The container supervises the ComfyUI process so that **Restart Manager** can restart ComfyUI without stopping the TrueNAS application itself.
 
 If an old standalone `ComfyUI-Manager` clone exists in the persistent `custom_nodes` dataset, the container prints a warning because this build uses ComfyUI's integrated Manager support.
 
-### MiniMax H3 Support
+## Local LLM / llama-cpp-python
 
-This image is intentionally pinned to ComfyUI commit:
+The local LLM custom node uses `llama-cpp-python` to run GGUF models directly inside ComfyUI. The current backend is **JamePeng llama-cpp-python 0.3.49**, built from source against the CUDA 13 toolkit in this image.
+
+The build uses JamePeng commit:
 
 ```text
-e01fb4c
+34c1bfbce3ad485d31e67039fa9200e6ab49882e
 ```
 
-This commit contains the native MiniMax H3 guide and MultiRef functionality required by current H3 Motion Context workflows.
+with:
 
-It supports workflows that combine:
+```text
+GGML_CUDA=ON
+GGML_BACKEND_DL=OFF
+CMAKE_CUDA_ARCHITECTURES=86
+```
+
+This replaces the previous prebuilt-wheel approach. That wheel could resolve CUDA 12 runtime libraries inside the CUDA 13 container and resulted in:
+
+```text
+GPU offload: False
+```
+
+The source-built backend was validated on the RTX 3090 with:
+
+```text
+llama_cpp: 0.3.49
+GPU offload: True
+```
+
+The CUDA 12 user-space packages that remain in the Dockerfile are for **faster-whisper / CTranslate2 only**. They are not the llama-cpp workaround. No `GGML_BACKEND_PATH` override or CUDA-12 llama patch is required.
+
+The custom-node source itself remains on the persistent TrueNAS `custom_nodes` dataset. The compiled Python backend lives in the container image, so recreating the application from the newly built image restores the known-good CUDA build automatically. A normal Docker/container restart does not discard its writable layer, but a container recreation does; baking the backend into the image removes that dependency on temporary container state.
+
+### Runtime verification
+
+After deploying the new image, verify the installed package from a neutral working directory:
+
+```bash
+C=$(docker ps --format '{{.Names}}' | grep -i comfyui | head -1)
+
+docker exec "$C" bash -lc '
+cd /
+python - <<'"'"'PY'"'"'
+import llama_cpp
+
+print("llama_cpp:", llama_cpp.__version__)
+print("module file:", llama_cpp.__file__)
+print("GPU offload:", llama_cpp.llama_supports_gpu_offload())
+PY
+'
+```
+
+Expected result:
+
+```text
+llama_cpp: 0.3.49
+module file: /usr/local/lib/python3.12/dist-packages/llama_cpp/...
+GPU offload: True
+```
+
+For the current text-only Qwen3.8 workflow, use:
+
+```text
+model: Huihui-Qwen3.8-27B-abliterated-UD-Q5_K_XL.gguf
+mmproj: None
+chat_handler: None
+n_ctx: 8192
+vram_limit: -1
+```
+
+The model is stored on the persistent models dataset under:
+
+```text
+/app/ComfyUI/models/LLM/Huihui-Qwen3.8-27B-abliterated-UD-Q5_K_XL.gguf
+```
+
+If ComfyUI Manager is later used to reinstall or upgrade the llama-cpp custom node and its installer replaces `llama-cpp-python`, recreate the TrueNAS application from this image to restore the image-baked CUDA 13 backend.
+
+## MiniMax H3 Support
+
+ComfyUI v0.36.0 includes the native MiniMax H3 functionality used by current workflows, including the guide/MultiRef features introduced earlier in the H3 implementation and the newer v0.36 H3 VAE optimizations.
+
+The image supports workflows that combine:
 
 - Ref2VA character/reference images
 - H3 image/keyframe guides
@@ -131,14 +224,83 @@ It supports workflows that combine:
 - MiniMax H3 video latents
 - MiniMax H3 audio latents
 - reference-aware guide merging
+- LightX2V 8-step Ref2V acceleration
+- MiniMax H3 PDD 8-step acceleration
 
-This is required by current versions of:
+This supports current versions of:
 
 ```text
 ComfyUI-H3-Motion-Context-MultiRef
 ```
 
-Older ComfyUI builds such as `v0.33.1` do not contain the required native H3 guide/MultiRef implementation.
+### MiniMax H3 PDD Acc
+
+The image includes:
+
+```text
+ComfyUI-MiniMax-H3-PDD-Acc
+```
+
+The node code is stored inside the image at:
+
+```text
+/opt/ComfyUI-MiniMax-H3-PDD-Acc
+```
+
+and exposed at runtime as:
+
+```text
+/app/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-PDD-Acc
+```
+
+PDD weights are **not** baked into the container image. Put the matching PDD model file in the persistent models dataset under:
+
+```text
+/app/ComfyUI/models/pdd_acc/
+```
+
+For the Ref2VA workflow, use either the original Alibaba PAI file:
+
+```text
+MiniMax-H3-Ref2VA-Acc-8Step.safetensors
+```
+
+or the compatible pre-converted ComfyUI-key version:
+
+```text
+minimax_h3_ref2va_pdd_acc_8step_comfyui.safetensors
+```
+
+The PDD node supports both full and pruned INT8 ConvRot Ref2VA checkpoints through ComfyUI's quant-aware patch path.
+
+The required PDD sampling recipe is:
+
+- Euler sampler
+- 8 PDD evaluations for the normal 8-step path
+- BasicGuider / CFG 1.0 behavior
+- MiniMax H3 sigma shift `12.0` video / `3.0` audio
+- sigmas emitted by the PDD Apply node
+- **do not stack LightX2V Turbo or other step-distillation LoRAs with PDD**
+
+## SeedVR2
+
+SeedVR2 is shipped as image-owned code under:
+
+```text
+/opt/ComfyUI-SeedVR2_VideoUpscaler
+```
+
+At container start, the entrypoint exposes it as:
+
+```text
+/app/ComfyUI/custom_nodes/ComfyUI-SeedVR2_VideoUpscaler
+```
+
+SeedVR2 model files remain persistent under:
+
+```text
+/app/ComfyUI/models/SEEDVR2
+```
 
 ## TrueNAS Custom App YAML
 
@@ -207,3 +369,27 @@ ghcr.io/scallbe1/comfyui-truenas:latest
 ```
 
 Persistent models, custom nodes, input files, output files, user configuration, and the Hugging Face cache remain on the TrueNAS datasets across container replacement.
+
+## Verifying the Running Version
+
+The Docker build records the exact ComfyUI Git commit in:
+
+```text
+/opt/comfyui-git-commit.txt
+```
+
+The build smoke test also prints ComfyUI's reported version and Git commit during image construction.
+
+After the container is running, you can verify the pinned release with:
+
+```bash
+docker exec -it $(docker ps --filter ancestor=ghcr.io/scallbe1/comfyui-truenas:latest -q | head -1) \
+  python3 -c 'from comfyui_version import __version__; print(__version__)'
+```
+
+or inspect the saved commit:
+
+```bash
+docker exec -it $(docker ps --filter ancestor=ghcr.io/scallbe1/comfyui-truenas:latest -q | head -1) \
+  cat /opt/comfyui-git-commit.txt
+```
