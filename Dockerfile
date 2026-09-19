@@ -361,7 +361,6 @@ from importlib.metadata import PackageNotFoundError, version
 
 import av
 import diskcache
-import llama_cpp
 import numpy
 import onnxruntime as ort
 import torch
