@@ -1,7 +1,5 @@
 FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
-# Use the official ComfyUI release tag for reproducible GitHub Actions / GHCR
-# builds. ComfyUI's own requirements.txt controls its Python dependencies.
 ARG COMFYUI_REF=v0.36.0
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
@@ -40,9 +38,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app/ComfyUI
 
-# -----------------------------------------------------------------------------
-# OS dependencies
-# -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ca-certificates \
@@ -85,8 +80,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Ubuntu 24.04 protects its system Python with PEP 668. We intentionally use the
-# container's system Python and tell pip that this is an isolated container.
 RUN printf '%s\n' \
         '[global]' \
         'break-system-packages = true' \
@@ -100,9 +93,6 @@ RUN printf '%s\n' \
         'break-system-packages = true' \
         > /etc/uv/uv.toml
 
-# Keep only the critical compute stack pinned. Do NOT pin transitive packages
-# such as ONNX Runtime here; doing so made the previous image unnecessarily
-# fragile when another package legitimately installed a newer release.
 RUN printf '%s\n' \
         'numpy==1.26.4' \
         'torch==2.11.0' \
@@ -112,9 +102,6 @@ RUN printf '%s\n' \
 
 ENV PIP_CONSTRAINT=/opt/pip-constraints.txt
 
-# -----------------------------------------------------------------------------
-# Python build tooling and CUDA PyTorch
-# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir --ignore-installed \
     "setuptools<81" \
     wheel \
@@ -128,13 +115,6 @@ RUN python3 -m pip install --no-cache-dir \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# -----------------------------------------------------------------------------
-# ComfyUI core + integrated Manager
-#
-# --filter=blob:none keeps the Git checkout much smaller than a normal full
-# clone while retaining commit history, allowing the release tag to be checked
-# out reliably.
-# -----------------------------------------------------------------------------
 RUN git clone --filter=blob:none \
         https://github.com/Comfy-Org/ComfyUI.git . \
     && git checkout --detach "${COMFYUI_REF}" \
@@ -142,9 +122,6 @@ RUN git clone --filter=blob:none \
     && python3 -m pip install --no-cache-dir -r requirements.txt \
     && python3 -m pip install --no-cache-dir -r manager_requirements.txt
 
-# -----------------------------------------------------------------------------
-# General custom-node dependencies
-# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir \
     GitPython \
     dill \
@@ -159,6 +136,7 @@ RUN python3 -m pip install --no-cache-dir \
     rich \
     rich-argparse \
     cachetools \
+    diskcache \
     qrcode[pil] \
     google-cloud-storage \
     "PyOpenGL==3.1.10" \
@@ -231,7 +209,6 @@ RUN python3 -m pip install --no-cache-dir \
     streamlit \
     websocket-client
 
-# Dependencies used by the mounted custom-node collection.
 RUN python3 -m pip install --no-cache-dir \
     python-bidi \
     PyYAML \
@@ -263,15 +240,10 @@ RUN python3 -m pip install --no-cache-dir \
     "rawpy==0.25.1" \
     "OpenEXR==3.4.12"
 
-# These packages otherwise try to replace large parts of the already-working
-# CUDA / ONNX / image stack. Their required runtime dependencies are installed
-# explicitly elsewhere in this image.
 RUN python3 -m pip install --no-cache-dir --no-deps \
     easyocr \
     "rembg==2.0.67"
 
-# General segmentation / CV dependencies.
-# Detectron2 / DensePose are intentionally omitted.
 RUN python3 -m pip install --no-cache-dir \
     cloudpickle \
     future \
@@ -284,12 +256,8 @@ RUN python3 -m pip install --no-cache-dir \
     termcolor \
     yacs
 
-# Multilingual sentence splitter used by AlekPet translation nodes.
 RUN python3 -m spacy download xx_sent_ud_sm
 
-# -----------------------------------------------------------------------------
-# Chrome for html2image / Selenium nodes
-# -----------------------------------------------------------------------------
 RUN wget -q -O /tmp/google-chrome.deb \
         https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get update \
@@ -298,9 +266,6 @@ RUN wget -q -O /tmp/google-chrome.deb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# -----------------------------------------------------------------------------
-# SAM2 and NVIDIA VFX
-# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir \
     git+https://github.com/facebookresearch/sam2.git
 
@@ -308,11 +273,6 @@ RUN python3 -m pip install --no-cache-dir --upgrade \
     --extra-index-url https://pypi.nvidia.com \
     nvidia-vfx
 
-# -----------------------------------------------------------------------------
-# SeedVR2 — keep the image-owned code outside the TrueNAS custom_nodes mount.
-# Install requirements using the same Python and compute constraints as ComfyUI.
-# Use the headless OpenCV distribution already used by this server.
-# -----------------------------------------------------------------------------
 RUN git clone --depth 1 \
         https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git \
         /opt/ComfyUI-SeedVR2_VideoUpscaler \
@@ -322,21 +282,10 @@ RUN git clone --depth 1 \
     && python3 -m pip install --no-cache-dir -r /opt/seedvr2-requirements.txt \
     && test -f /opt/ComfyUI-SeedVR2_VideoUpscaler/inference_cli.py
 
-# -----------------------------------------------------------------------------
-# MiniMax H3 PDD Acc — keep image-owned code outside the TrueNAS custom_nodes
-# mount, then expose it at runtime with a stable symlink. PDD model files are
-# intentionally NOT baked into the image; place them in models/pdd_acc on the
-# persistent models dataset.
-# -----------------------------------------------------------------------------
 RUN git clone --depth 1 \
         https://github.com/Jalen-Brunson/ComfyUI-MiniMax-H3-PDD-Acc.git \
         /opt/ComfyUI-MiniMax-H3-PDD-Acc
 
-# -----------------------------------------------------------------------------
-# Re-establish the critical numerical / PyTorch stack after broad dependencies.
-# This is intentional: custom-node packages are allowed to resolve their own
-# dependencies, then the known-good compute stack is restored once at the end.
-# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir --upgrade --force-reinstall \
     "numpy==1.26.4" \
     "pandas<3" \
@@ -349,30 +298,19 @@ RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# xFormers 0.0.35 uses the PyTorch stable ABI for PyTorch 2.10+.
 RUN python3 -m pip install --no-cache-dir --no-deps \
     "xformers==0.0.35" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# SageAttention V1 is Triton based and works without compiling an image-specific
-# CUDA extension at Docker build time.
 RUN python3 -m pip install --no-cache-dir --no-deps \
     "sageattention==1.0.6"
 
-# -----------------------------------------------------------------------------
-# faster-whisper / CTranslate2
-#
-# CTranslate2 currently relies on CUDA 12 user-space libraries. Those can live
-# alongside the CUDA 13 ComfyUI/PyTorch stack. The entrypoint discovers their
-# actual site-packages paths dynamically at runtime.
-# -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir \
     faster-whisper \
     huggingface-hub \
     nvidia-cublas-cu12 \
     "nvidia-cudnn-cu12==9.*"
 
-# Ensure the correct OpenAI Whisper distribution owns `import whisper`.
 RUN python3 -m pip uninstall -y \
         whisper \
         openai-whisper \
@@ -385,35 +323,10 @@ RUN python3 -m pip uninstall -y \
         --force-reinstall \
         "PyOpenGL-accelerate==3.1.10"
 
-# -----------------------------------------------------------------------------
-# ONNX Runtime
-#
-# Some custom-node dependencies (including face/InsightFace-related nodes) can
-# install the CPU `onnxruntime` distribution, while others expect
-# `onnxruntime-gpu`. Both provide the same Python import name and installing
-# both can overwrite files unpredictably.
-#
-# Resolve that once, at the END of dependency installation. ORT 1.30.0 is the
-# CUDA-capable build verified with this CUDA 13 / Python 3.12 image and ZenID.
-# Keep only the GPU distribution so CUDAExecutionProvider cannot be shadowed by
-# the CPU wheel.
-# -----------------------------------------------------------------------------
 RUN python3 -m pip uninstall -y onnxruntime onnxruntime-gpu || true \
     && python3 -m pip install --no-cache-dir \
         "onnxruntime-gpu==1.30.0"
 
-# -----------------------------------------------------------------------------
-# llama-cpp-python 0.3.49 -- CUDA 13 / RTX 3090
-#
-# The standard/prebuilt package previously pulled CUDA 12 runtime libraries and
-# reported GPU offload unavailable in this CUDA 13 image. Build the JamePeng
-# fork from source against the CUDA 13 toolkit already present in the image.
-#
-# Keep this AFTER all other pip dependency installation so a custom-node
-# requirement cannot replace the working CUDA build during image construction.
-# SM 8.6 targets the RTX 3090 used by this TrueNAS host and keeps build time
-# lower than compiling extra GPU architectures that this server does not use.
-# -----------------------------------------------------------------------------
 RUN python3 -m pip uninstall -y llama-cpp-python llama_cpp_python || true \
     && rm -rf /tmp/llama-cpp-python \
     && git clone --filter=blob:none --no-checkout \
@@ -429,9 +342,6 @@ RUN python3 -m pip uninstall -y llama-cpp-python llama_cpp_python || true \
     && cd / \
     && rm -rf /tmp/llama-cpp-python
 
-# -----------------------------------------------------------------------------
-# Bake faster-whisper large-v3 into the image
-# -----------------------------------------------------------------------------
 RUN mkdir -p "${HF_HUB_CACHE}" \
     && python3 - <<'PY'
 import os
@@ -446,18 +356,12 @@ PY
 
 RUN chmod -R a+rX "${HF_HOME}"
 
-# -----------------------------------------------------------------------------
-# Non-brittle build smoke test
-#
-# This intentionally checks only that the core Python packages can be imported
-# and reports versions. It does NOT fail because a transitive dependency moved
-# from x.y.0 to x.y.1, and it does NOT assume package files live at a hard-coded
-# Python path.
-# -----------------------------------------------------------------------------
 RUN python3 - <<'PY'
 from importlib.metadata import PackageNotFoundError, version
 
 import av
+import diskcache
+import llama_cpp
 import numpy
 import onnxruntime as ort
 import torch
@@ -510,9 +414,6 @@ for package in (
         print(f"{package}: package metadata not found")
 PY
 
-# -----------------------------------------------------------------------------
-# Runtime entrypoint
-# -----------------------------------------------------------------------------
 RUN cat > /usr/local/bin/comfyui-entrypoint <<'SHENTRY'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -523,9 +424,6 @@ mkdir -p \
     "${MPLCONFIGDIR}" \
     "${TORCH_EXTENSIONS_DIR}"
 
-# Expose SeedVR2 after TrueNAS has mounted the persistent custom_nodes dataset.
-# The stable symlink points at the code shipped with the running image, so a
-# rebuilt image also updates SeedVR2 without runtime git or pip operations.
 SEEDVR2_IMAGE_DIR=/opt/ComfyUI-SeedVR2_VideoUpscaler
 SEEDVR2_NODE_DIR=/app/ComfyUI/custom_nodes/ComfyUI-SeedVR2_VideoUpscaler
 mkdir -p /app/ComfyUI/custom_nodes /app/ComfyUI/models/SEEDVR2
@@ -543,9 +441,6 @@ fi
 
 echo "[INFO] SeedVR2 ready at ${SEEDVR2_NODE_DIR}; models persist in /app/ComfyUI/models/SEEDVR2"
 
-# Expose MiniMax H3 PDD Acc after the persistent custom_nodes dataset is mounted.
-# This mirrors the SeedVR2 image-owned-code pattern so container rebuilds update
-# the node without overwriting the user's persistent custom-node dataset.
 PDD_IMAGE_DIR=/opt/ComfyUI-MiniMax-H3-PDD-Acc
 PDD_NODE_DIR=/app/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-PDD-Acc
 mkdir -p /app/ComfyUI/models/pdd_acc
@@ -563,8 +458,6 @@ fi
 
 echo "[INFO] MiniMax H3 PDD Acc ready at ${PDD_NODE_DIR}; PDD models persist in /app/ComfyUI/models/pdd_acc"
 
-# Find NVIDIA CUDA 12 user-space libraries installed by pip without hard-coding
-# the Python minor version or site-packages directory.
 PY_SITE="$(python3 - <<'PY'
 import site
 paths = site.getsitepackages()
@@ -583,9 +476,6 @@ if [[ -n "${PY_SITE}" ]]; then
     done
 fi
 
-# Compile JIT extensions only for CUDA architectures actually visible to the
-# container. This supports homogeneous or mixed visible GPU sets and avoids
-# compiling unused architectures.
 RUNTIME_CUDA_ARCH="$(python3 - <<'PY' 2>/dev/null || true
 import torch
 
@@ -603,8 +493,6 @@ if [[ -n "${RUNTIME_CUDA_ARCH}" ]]; then
     echo "[INFO] Runtime CUDA architectures: ${TORCH_CUDA_ARCH_LIST}"
 fi
 
-# Point WAS Node Suite at the system ffmpeg binary if the node is mounted.
-# Failure to update this optional config must never prevent ComfyUI from booting.
 python3 - <<'PYWAS' || true
 import json
 from pathlib import Path
@@ -625,8 +513,6 @@ if path.parent.is_dir():
         print(f"[WARN] Could not update WAS ffmpeg path: {exc}")
 PYWAS
 
-# Warn about an old Manager clone in the persistent custom_nodes dataset.
-# Do not delete or rename user data automatically.
 for legacy_manager in \
     /app/ComfyUI/custom_nodes/ComfyUI-Manager \
     /app/ComfyUI/custom_nodes/comfyui-manager
@@ -637,7 +523,6 @@ do
     fi
 done
 
-# Keep the TrueNAS application alive across Manager-requested ComfyUI restarts.
 COMFY_SESSION=/tmp/comfyui-cli-session
 export __COMFY_CLI_SESSION__="${COMFY_SESSION}"
 
@@ -678,8 +563,6 @@ while true; do
 done
 SHENTRY
 
-# Git / Windows editors may save this Dockerfile with CRLF. Strip CRLF from the
-# generated entrypoint, validate shell syntax, and make it executable.
 RUN sed -i 's/\r$//' /usr/local/bin/comfyui-entrypoint \
     && chmod +x /usr/local/bin/comfyui-entrypoint \
     && bash -n /usr/local/bin/comfyui-entrypoint
@@ -688,6 +571,4 @@ EXPOSE 8188
 
 ENTRYPOINT ["/usr/local/bin/comfyui-entrypoint"]
 
-# --enable-manager-legacy-ui implies Manager support in current ComfyUI, but
-# keeping --enable-manager explicitly makes the intent obvious.
 CMD ["--listen", "0.0.0.0", "--port", "8188", "--enable-dynamic-vram", "--enable-manager", "--enable-manager-legacy-ui"]
