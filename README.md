@@ -1,12 +1,12 @@
 # ComfyUI for TrueNAS
 
-This repository provides a containerized ComfyUI environment for TrueNAS SCALE. The current image targets **ComfyUI v0.36.0** on Ubuntu 24.04 with CUDA 13.0.3 and cuDNN support.
+This repository provides a containerized ComfyUI environment for TrueNAS SCALE. The current image targets **ComfyUI v0.39.0** on Ubuntu 24.04 with CUDA 13.0.3 and cuDNN support.
 
 It includes Python and system dependencies for a broad range of ComfyUI image, video, audio, music, speech-to-text, local-LLM, and utility custom nodes, with particular support for current MiniMax H3 workflows.
 
 ## Included Platform
 
-- **ComfyUI v0.36.0**
+- **ComfyUI v0.39.0**
   - Includes the native MiniMax H3 guide / MultiRef support required by current H3 Motion Context workflows
   - Includes the v0.36 MiniMax H3 VAE optimizations and reduced H3 VAE memory usage
   - Uses the current integrated ComfyUI Manager
