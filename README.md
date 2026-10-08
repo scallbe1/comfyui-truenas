@@ -8,7 +8,6 @@ It includes Python and system dependencies for a broad range of ComfyUI image, v
 
 - **ComfyUI v0.39.0**
   - Includes the native MiniMax H3 guide / MultiRef support required by current H3 Motion Context workflows
-  - Includes the v0.36 MiniMax H3 VAE optimizations and reduced H3 VAE memory usage
   - Uses the current integrated ComfyUI Manager
 - Python 3.12
 - PyTorch 2.11.0 with CUDA 13.0
