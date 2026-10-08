@@ -2,7 +2,7 @@ FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
 # Use the official ComfyUI release tag for reproducible GitHub Actions / GHCR
 # builds. ComfyUI's own requirements.txt controls its Python dependencies.
-ARG COMFYUI_REF=v0.37.4
+ARG COMFYUI_REF=v0.39.0
 ARG TORCH_VERSION=2.11.0
 ARG TORCHVISION_VERSION=0.26.0
 ARG TORCHAUDIO_VERSION=2.11.0
