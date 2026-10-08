@@ -98,8 +98,6 @@ environment:
 
 `HF_TOKEN` is optional for public Hugging Face repositories but may be required for gated or authenticated model downloads.
 
-Do **not** commit a real Hugging Face token to this repository. Keep the actual token in your private TrueNAS configuration or another appropriate secret-management mechanism.
-
 The remaining Hugging Face variables keep downloaded files under the persistent `/opt/huggingface` cache and increase the download timeout for large model files.
 
 ## Persistent Custom Nodes
