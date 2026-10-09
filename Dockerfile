@@ -356,9 +356,10 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
     --index-url https://download.pytorch.org/whl/cu130
 
 # Build SageAttention 2.2.0 CUDA kernels for the RTX 3090 (SM 8.6).
+# The upstream 2.2.0 PyPI publication failed, so install the official Git tag.
 # This requires the CUDA development base image already used above.
 RUN TORCH_CUDA_ARCH_LIST="8.6" python3 -m pip install --no-cache-dir --no-build-isolation --no-deps \
-    "sageattention==2.2.0"
+    "git+https://github.com/thu-ml/SageAttention.git@v2.2.0"
 
 # -----------------------------------------------------------------------------
 # llama-cpp-python
