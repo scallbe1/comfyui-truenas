@@ -3,8 +3,8 @@ FROM nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 # Use the official ComfyUI release tag for reproducible GitHub Actions / GHCR
 # builds. ComfyUI's own requirements.txt controls its Python dependencies.
 ARG COMFYUI_REF=v0.39.0
-ARG TORCH_VERSION=2.11.0
-ARG TORCHVISION_VERSION=0.26.0
+ARG TORCH_VERSION=2.13.0
+ARG TORCHVISION_VERSION=0.28.0
 ARG TORCHAUDIO_VERSION=2.11.0
 ARG LLAMA_CPP_PYTHON_REF=34c1bfbce3ad485d31e67039fa9200e6ab49882e
 
@@ -105,8 +105,8 @@ RUN printf '%s\n' \
 # fragile when another package legitimately installed a newer release.
 RUN printf '%s\n' \
         'numpy==1.26.4' \
-        'torch==2.11.0' \
-        'torchvision==0.26.0' \
+        'torch==2.13.0' \
+        'torchvision==0.28.0' \
         'torchaudio==2.11.0' \
         > /opt/pip-constraints.txt
 
@@ -355,10 +355,10 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
     "xformers==0.0.35" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# SageAttention V1 is Triton based and works without compiling an image-specific
-# CUDA extension at Docker build time.
-RUN python3 -m pip install --no-cache-dir --no-deps \
-    "sageattention==1.0.6"
+# Build SageAttention 2.2.0 CUDA kernels for the RTX 3090 (SM 8.6).
+# This requires the CUDA development base image already used above.
+RUN TORCH_CUDA_ARCH_LIST="8.6" python3 -m pip install --no-cache-dir --no-build-isolation --no-deps \
+    "sageattention==2.2.0"
 
 # -----------------------------------------------------------------------------
 # llama-cpp-python
