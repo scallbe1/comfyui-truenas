@@ -2,7 +2,7 @@
 
 This repository provides a containerized ComfyUI environment for TrueNAS SCALE. The current image targets **ComfyUI v0.39.0** on Ubuntu 24.04 with CUDA 13.0.3 and cuDNN support.
 
-It includes Python and system dependencies for a broad range of ComfyUI image, video, audio, music, speech-to-text, local-LLM, and utility custom nodes, with particular support for current MiniMax H3 workflows.
+It includes Python and system dependencies for the image, video, and utility custom nodes in the installed set, with particular support for current MiniMax H3 workflows. The dependency layers were pruned on 2026-10-22 to what the active custom-node collection actually imports; anything that only served now-quarantined nodes was dropped (Chrome, the faster-whisper install and its baked `large-v3` model, spacy, xformers, easyocr, nvidia-vfx, the audio/document-processing stacks, and the SeedVR2 and MiniMax-H3-PDD-Acc image-owned node clones).
 
 ## Included Platform
 
@@ -10,19 +10,15 @@ It includes Python and system dependencies for a broad range of ComfyUI image, v
   - Includes the native MiniMax H3 guide / MultiRef support required by current H3 Motion Context workflows
   - Uses the current integrated ComfyUI Manager
 - Python 3.12
-- PyTorch 2.11.0 with CUDA 13.0
-- Torchvision 0.26.0
+- PyTorch 2.13.0 with CUDA 13.0
+- Torchvision 0.28.0
 - Torchaudio 2.11.0
-- xFormers 0.0.35
-- SageAttention 1.0.6
+- SageAttention 2.2.0 (official Git tag, built for SM 8.6)
 - ONNX Runtime GPU 1.30.0
 - llama-cpp-python 0.3.49 (JamePeng fork), built from source against CUDA 13 with GPU offload
-- faster-whisper with the `large-v3` model included in the image
 - FFmpeg
-- Google Chrome
-- OpenGL, audio, vision, document-processing, and LLM dependencies
-- SeedVR2 Video Upscaler
-- MiniMax H3 PDD Acc custom nodes
+- OpenCV (headless), insightface, segment-anything / SAM2, rembg, and the other dependencies imported by the installed custom-node set
+- ComfyUI-H3-Continuum (image-owned, patched for 256-chunk long runs)
 
 The base CUDA/PyTorch image includes CUDA support for:
 
@@ -112,12 +108,11 @@ Custom nodes installed through ComfyUI Manager or manually added to this dataset
 
 Some custom nodes are intentionally shipped as **image-owned code under `/opt`** and exposed into the mounted `custom_nodes` directory with runtime symlinks. This allows a rebuilt container image to update those nodes without overwriting the rest of the persistent custom-node dataset.
 
-The image currently manages these nodes this way:
+The image currently manages one node this way:
 
-- `ComfyUI-SeedVR2_VideoUpscaler`
-- `ComfyUI-MiniMax-H3-PDD-Acc`
+- `ComfyUI-H3-Continuum` (with the long-run patch applied at build time; the build records its commit in `/opt/h3-continuum-git-commit.txt`)
 
-If a normal directory with either name already exists in the persistent `custom_nodes` dataset, the entrypoint moves it into:
+If a normal directory with the same name already exists in the persistent `custom_nodes` dataset, the entrypoint moves it into:
 
 ```text
 /app/ComfyUI/user/custom-node-backups/
@@ -160,7 +155,7 @@ llama_cpp: 0.3.49
 GPU offload: True
 ```
 
-The CUDA 12 user-space packages that remain in the Dockerfile are for **faster-whisper / CTranslate2 only**. They are not the llama-cpp workaround. No `GGML_BACKEND_PATH` override or CUDA-12 llama patch is required.
+The CUDA 12 user-space packages that used to accompany faster-whisper / CTranslate2 were removed in the 2026-10-22 pruning; they were never the llama-cpp workaround. No `GGML_BACKEND_PATH` override or CUDA-12 llama patch is required.
 
 The custom-node source itself remains on the persistent TrueNAS `custom_nodes` dataset. The compiled Python backend lives in the container image, so recreating the application from the newly built image restores the known-good CUDA build automatically. A normal Docker/container restart does not discard its writable layer, but a container recreation does; baking the backend into the image removes that dependency on temporary container state.
 
@@ -222,82 +217,28 @@ The image supports workflows that combine:
 - MiniMax H3 audio latents
 - reference-aware guide merging
 - LightX2V 8-step Ref2V acceleration
-- MiniMax H3 PDD 8-step acceleration
 
 This supports current versions of:
 
 ```text
 ComfyUI-H3-Motion-Context-MultiRef
+ComfyUI-H3-Continuum
+ComfyUI-Spark-H3
 ```
 
-### MiniMax H3 PDD Acc
+### Removed: MiniMax H3 PDD Acc
 
-The image includes:
+The `ComfyUI-MiniMax-H3-PDD-Acc` node and its image-owned `/opt` clone were
+removed in the 2026-10-22 dependency pruning — no saved workflow used it. PDD
+model files left in `/app/ComfyUI/models/pdd_acc/` are harmless; the node that
+consumed them is gone from the image.
 
-```text
-ComfyUI-MiniMax-H3-PDD-Acc
-```
+### Removed: SeedVR2
 
-The node code is stored inside the image at:
-
-```text
-/opt/ComfyUI-MiniMax-H3-PDD-Acc
-```
-
-and exposed at runtime as:
-
-```text
-/app/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-PDD-Acc
-```
-
-PDD weights are **not** baked into the container image. Put the matching PDD model file in the persistent models dataset under:
-
-```text
-/app/ComfyUI/models/pdd_acc/
-```
-
-For the Ref2VA workflow, use either the original Alibaba PAI file:
-
-```text
-MiniMax-H3-Ref2VA-Acc-8Step.safetensors
-```
-
-or the compatible pre-converted ComfyUI-key version:
-
-```text
-minimax_h3_ref2va_pdd_acc_8step_comfyui.safetensors
-```
-
-The PDD node supports both full and pruned INT8 ConvRot Ref2VA checkpoints through ComfyUI's quant-aware patch path.
-
-The required PDD sampling recipe is:
-
-- Euler sampler
-- 8 PDD evaluations for the normal 8-step path
-- BasicGuider / CFG 1.0 behavior
-- MiniMax H3 sigma shift `12.0` video / `3.0` audio
-- sigmas emitted by the PDD Apply node
-- **do not stack LightX2V Turbo or other step-distillation LoRAs with PDD**
-
-## SeedVR2
-
-SeedVR2 is shipped as image-owned code under:
-
-```text
-/opt/ComfyUI-SeedVR2_VideoUpscaler
-```
-
-At container start, the entrypoint exposes it as:
-
-```text
-/app/ComfyUI/custom_nodes/ComfyUI-SeedVR2_VideoUpscaler
-```
-
-SeedVR2 model files remain persistent under:
-
-```text
-/app/ComfyUI/models/SEEDVR2
-```
+`ComfyUI-SeedVR2_VideoUpscaler` was also removed in the 2026-10-22 pruning for
+the same reason (its entrypoint symlink logic is gone too). Model files remain
+persistent under `/app/ComfyUI/models/SEEDVR2` if you ever re-add a node that
+uses them.
 
 ## TrueNAS Custom App YAML
 
