@@ -24,13 +24,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     XDG_CONFIG_HOME=/app/ComfyUI/user/.config \
     YOLO_CONFIG_DIR=/app/ComfyUI/user/.config/Ultralytics \
     MPLCONFIGDIR=/app/ComfyUI/user/.cache/matplotlib \
-    CHROME_BIN=/usr/bin/google-chrome \
     TORCH_EXTENSIONS_DIR=/app/ComfyUI/user/.cache/torch_extensions \
     HF_HOME=/opt/huggingface \
     HF_HUB_CACHE=/opt/huggingface/hub \
     HF_HUB_DOWNLOAD_TIMEOUT=300 \
     HF_HUB_DISABLE_TELEMETRY=1 \
-    FASTER_WHISPER_MODEL_REPO=Systran/faster-whisper-large-v3 \
     CUDA_HOME=/usr/local/cuda \
     CUDACXX=/usr/local/cuda/bin/nvcc \
     PATH=/usr/local/cuda/bin:${PATH} \
@@ -148,156 +146,50 @@ RUN git clone --filter=blob:none \
 RUN python3 -m pip install --no-cache-dir \
     GitPython \
     dill \
-    py-cpuinfo \
     toml \
     nvidia-ml-py \
-    color-matcher \
     chardet \
-    deepdiff \
     piexif \
     requirements-parser \
     rich \
     rich-argparse \
-    cachetools \
-    diskcache \
-    qrcode[pil] \
-    google-cloud-storage \
-    "PyOpenGL==3.1.10" \
-    "PyOpenGL-accelerate==3.1.10"
+    diskcache
 
 RUN python3 -m pip install --no-cache-dir \
     gguf \
     opencv-python-headless \
     imageio-ffmpeg \
-    PyWavelets \
     matplotlib \
     soundfile \
-    sentencepiece \
     transformers \
     accelerate \
     einops \
     scikit-image \
-    peft \
-    supervision \
-    glfw \
     ultralytics \
-    timm \
-    fvcore \
     onnx \
     safetensors \
-    facexlib \
-    basicsr \
     insightface \
     segment-anything \
-    open-clip-torch \
     "bitsandbytes>=0.50.0" \
-    glitch_this \
-    mediapipe \
-    diffusers \
-    kornia \
-    "ninja~=1.11.1.4" \
-    dynamicprompts \
-    tiktoken
+    diffusers
+
 
 RUN python3 -m pip install --no-cache-dir \
-    scipy \
-    librosa \
-    pedalboard \
-    pyloudnorm \
-    noisereduce \
-    demucs \
-    reportlab \
-    PyPDF2 \
-    PyMuPDF \
-    rotary_embedding_torch
-
-RUN python3 -m pip install --no-cache-dir \
-    fal-client \
-    runwayml \
-    openai \
-    "openai-whisper==20250625" \
-    ollama \
-    gdown \
-    google-generativeai \
-    google-genai \
-    langchain-community \
-    langchain-openai \
-    markdownify \
-    neo4j \
-    docx2txt \
-    openpyxl \
-    pdfplumber \
-    xlrd \
-    wikipedia \
-    streamlit \
-    websocket-client
+    openai
 
 # Dependencies used by the mounted custom-node collection.
 RUN python3 -m pip install --no-cache-dir \
-    python-bidi \
-    PyYAML \
-    Shapely \
-    pyclipper \
-    jsonschema \
-    pooch \
-    pymatting \
-    lark \
-    deep-translator \
-    googletrans-py \
-    "git+https://github.com/argosopentech/argos-translate.git@08f017c324628434d671cf4d191ce681c620ff33" \
-    "stanza==1.10.1" \
-    sacremoses \
-    spacy \
-    html2image==2.0.3 \
-    srt \
-    pydub \
-    ffmpeg-python \
-    "py-cord[voice]" \
-    llama-index \
-    feedparser \
-    selenium \
-    mdtex2html \
-    keyboard \
-    "moviepy==1.0.3" \
-    sounddevice \
-    "colour-science==0.4.6" \
-    "rawpy==0.25.1" \
-    "OpenEXR==3.4.12"
+    jsonschema
 
-# These packages otherwise try to replace large parts of the already-working
-# CUDA / ONNX / image stack. Their required runtime dependencies are installed
-# explicitly elsewhere in this image.
-RUN python3 -m pip install --no-cache-dir --no-deps \
-    easyocr \
-    "rembg==2.0.67"
+# rembg is imported by comfyui_tinyterranodes and Dance_Movie_Automation.
+# It may pull the CPU onnxruntime wheel; the onnxruntime-gpu resolution step
+# later in this file settles that once at the end.
+RUN python3 -m pip install --no-cache-dir "rembg==2.0.67"
 
-# General segmentation / CV dependencies.
-# Detectron2 / DensePose are intentionally omitted.
 RUN python3 -m pip install --no-cache-dir \
-    cloudpickle \
-    future \
-    hydra-core \
-    iopath \
-    omegaconf \
-    pycocotools \
-    pydot \
-    tensorboard \
-    termcolor \
-    yacs
+    tensorboard
 
-# Multilingual sentence splitter used by AlekPet translation nodes.
-RUN python3 -m spacy download xx_sent_ud_sm
 
-# -----------------------------------------------------------------------------
-# Chrome for html2image / Selenium nodes
-# -----------------------------------------------------------------------------
-RUN wget -q -O /tmp/google-chrome.deb \
-        https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends /tmp/google-chrome.deb \
-    && rm -f /tmp/google-chrome.deb \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
 # SAM2 and NVIDIA VFX
@@ -305,33 +197,8 @@ RUN wget -q -O /tmp/google-chrome.deb \
 RUN python3 -m pip install --no-cache-dir \
     git+https://github.com/facebookresearch/sam2.git
 
-RUN python3 -m pip install --no-cache-dir --upgrade \
-    --extra-index-url https://pypi.nvidia.com \
-    nvidia-vfx
 
-# -----------------------------------------------------------------------------
-# SeedVR2 — keep the image-owned code outside the TrueNAS custom_nodes mount.
-# Install requirements using the same Python and compute constraints as ComfyUI.
-# Use the headless OpenCV distribution already used by this server.
-# -----------------------------------------------------------------------------
-RUN git clone --depth 1 \
-        https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git \
-        /opt/ComfyUI-SeedVR2_VideoUpscaler \
-    && sed 's/^opencv-python$/opencv-python-headless/' \
-        /opt/ComfyUI-SeedVR2_VideoUpscaler/requirements.txt \
-        > /opt/seedvr2-requirements.txt \
-    && python3 -m pip install --no-cache-dir -r /opt/seedvr2-requirements.txt \
-    && test -f /opt/ComfyUI-SeedVR2_VideoUpscaler/inference_cli.py
 
-# -----------------------------------------------------------------------------
-# MiniMax H3 PDD Acc — keep image-owned code outside the TrueNAS custom_nodes
-# mount, then expose it at runtime with a stable symlink. PDD model files are
-# intentionally NOT baked into the image; place them in models/pdd_acc on the
-# persistent models dataset.
-# -----------------------------------------------------------------------------
-RUN git clone --depth 1 \
-        https://github.com/Jalen-Brunson/ComfyUI-MiniMax-H3-PDD-Acc.git \
-        /opt/ComfyUI-MiniMax-H3-PDD-Acc
 
 # -----------------------------------------------------------------------------
 # Re-establish the critical numerical / PyTorch stack after broad dependencies.
@@ -351,9 +218,6 @@ RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
     --index-url https://download.pytorch.org/whl/cu130
 
 # xFormers 0.0.35 uses the PyTorch stable ABI for PyTorch 2.10+.
-RUN python3 -m pip install --no-cache-dir --no-deps \
-    "xformers==0.0.35" \
-    --index-url https://download.pytorch.org/whl/cu130
 
 # Build SageAttention 2.2.0 CUDA kernels for the RTX 3090 (SM 8.6).
 # The upstream 2.2.0 PyPI publication failed, so install the official Git tag.
@@ -369,31 +233,7 @@ RUN TORCH_CUDA_ARCH_LIST="8.6" python3 -m pip install --no-cache-dir --no-build-
 # below rather than depending on a hard-coded installed-library path.
 # -----------------------------------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# faster-whisper / CTranslate2
-#
-# CTranslate2 currently relies on CUDA 12 user-space libraries. Those can live
-# alongside the CUDA 13 ComfyUI/PyTorch stack. The entrypoint discovers their
-# actual site-packages paths dynamically at runtime.
-# -----------------------------------------------------------------------------
-RUN python3 -m pip install --no-cache-dir \
-    faster-whisper \
-    huggingface-hub \
-    nvidia-cublas-cu12 \
-    "nvidia-cudnn-cu12==9.*"
 
-# Ensure the correct OpenAI Whisper distribution owns `import whisper`.
-RUN python3 -m pip uninstall -y \
-        whisper \
-        openai-whisper \
-        PyOpenGL \
-        PyOpenGL-accelerate || true \
-    && python3 -m pip install --no-cache-dir --no-deps \
-        "openai-whisper==20250625" \
-        "PyOpenGL==3.1.10" \
-    && python3 -m pip install --no-cache-dir --no-deps \
-        --force-reinstall \
-        "PyOpenGL-accelerate==3.1.10"
 
 # -----------------------------------------------------------------------------
 # ONNX Runtime
@@ -413,7 +253,7 @@ RUN python3 -m pip uninstall -y onnxruntime onnxruntime-gpu || true \
         "onnxruntime-gpu==1.30.0"
 
 # -----------------------------------------------------------------------------
-# Bake faster-whisper large-v3 into the image
+# llama-cpp-python built for CUDA 13 / SM86 (comfyui-llama-cpp imports llama_cpp)
 # -----------------------------------------------------------------------------
 RUN python3 -m pip uninstall -y llama-cpp-python llama_cpp_python || true \
     && rm -rf /tmp/llama-cpp-python \
@@ -429,20 +269,6 @@ RUN python3 -m pip uninstall -y llama-cpp-python llama_cpp_python || true \
        python3 -m pip install --no-cache-dir --no-deps --force-reinstall . \
     && cd / \
     && rm -rf /tmp/llama-cpp-python
-
-RUN mkdir -p "${HF_HUB_CACHE}" \
-    && python3 - <<'PY'
-import os
-from huggingface_hub import snapshot_download
-
-path = snapshot_download(
-    repo_id=os.environ["FASTER_WHISPER_MODEL_REPO"],
-    cache_dir=os.environ["HF_HUB_CACHE"],
-)
-print("Downloaded faster-whisper model to:", path)
-PY
-
-RUN chmod -R a+rX "${HF_HOME}"
 
 # -----------------------------------------------------------------------------
 # Spark-H3 GPU attention backend: RTX 3090 (SM86), CUDA 13.0, ComfyUI 0.39.x.
@@ -531,12 +357,8 @@ if cpu_ort is not None:
 for package in (
     "comfyui_manager",
     "onnxruntime-gpu",
-    "xformers",
     "sageattention",
     "llama-cpp-python",
-    "faster-whisper",
-    "openai-whisper",
-    "PyOpenGL-accelerate",
 ):
     try:
         print(f"{package}: {version(package)}")
@@ -614,45 +436,8 @@ mkdir -p \
     "${MPLCONFIGDIR}" \
     "${TORCH_EXTENSIONS_DIR}"
 
-# Expose SeedVR2 after TrueNAS has mounted the persistent custom_nodes dataset.
-# The stable symlink points at the code shipped with the running image, so a
-# rebuilt image also updates SeedVR2 without runtime git or pip operations.
-SEEDVR2_IMAGE_DIR=/opt/ComfyUI-SeedVR2_VideoUpscaler
-SEEDVR2_NODE_DIR=/app/ComfyUI/custom_nodes/ComfyUI-SeedVR2_VideoUpscaler
-mkdir -p /app/ComfyUI/custom_nodes /app/ComfyUI/models/SEEDVR2
+mkdir -p /app/ComfyUI/custom_nodes
 
-if [[ ! -L "${SEEDVR2_NODE_DIR}" ]] || [[ "$(readlink "${SEEDVR2_NODE_DIR}")" != "${SEEDVR2_IMAGE_DIR}" ]]; then
-    if [[ -e "${SEEDVR2_NODE_DIR}" || -L "${SEEDVR2_NODE_DIR}" ]]; then
-        SEEDVR2_BACKUP_ROOT=/app/ComfyUI/user/custom-node-backups
-        mkdir -p "${SEEDVR2_BACKUP_ROOT}"
-        SEEDVR2_BACKUP="${SEEDVR2_BACKUP_ROOT}/ComfyUI-SeedVR2_VideoUpscaler-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-        mv "${SEEDVR2_NODE_DIR}" "${SEEDVR2_BACKUP}"
-        echo "[INFO] Existing SeedVR2 installation backed up to ${SEEDVR2_BACKUP}"
-    fi
-    ln -s "${SEEDVR2_IMAGE_DIR}" "${SEEDVR2_NODE_DIR}"
-fi
-
-echo "[INFO] SeedVR2 ready at ${SEEDVR2_NODE_DIR}; models persist in /app/ComfyUI/models/SEEDVR2"
-
-# Expose MiniMax H3 PDD Acc after the persistent custom_nodes dataset is mounted.
-# This mirrors the SeedVR2 image-owned-code pattern so container rebuilds update
-# the node without overwriting the user's persistent custom-node dataset.
-PDD_IMAGE_DIR=/opt/ComfyUI-MiniMax-H3-PDD-Acc
-PDD_NODE_DIR=/app/ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-PDD-Acc
-mkdir -p /app/ComfyUI/models/pdd_acc
-
-if [[ ! -L "${PDD_NODE_DIR}" ]] || [[ "$(readlink "${PDD_NODE_DIR}")" != "${PDD_IMAGE_DIR}" ]]; then
-    if [[ -e "${PDD_NODE_DIR}" || -L "${PDD_NODE_DIR}" ]]; then
-        PDD_BACKUP_ROOT=/app/ComfyUI/user/custom-node-backups
-        mkdir -p "${PDD_BACKUP_ROOT}"
-        PDD_BACKUP="${PDD_BACKUP_ROOT}/ComfyUI-MiniMax-H3-PDD-Acc-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-        mv "${PDD_NODE_DIR}" "${PDD_BACKUP}"
-        echo "[INFO] Existing MiniMax H3 PDD Acc installation backed up to ${PDD_BACKUP}"
-    fi
-    ln -s "${PDD_IMAGE_DIR}" "${PDD_NODE_DIR}"
-fi
-
-echo "[INFO] MiniMax H3 PDD Acc ready at ${PDD_NODE_DIR}; PDD models persist in /app/ComfyUI/models/pdd_acc"
 
 # The custom_nodes directory is a persistent bind mount. Expose the image-owned,
 # already patched Continuum checkout through a symlink, as for SeedVR2 and PDD.
@@ -670,25 +455,6 @@ if [[ ! -L "${CONTINUUM_NODE_DIR}" ]] || [[ "$(readlink "${CONTINUUM_NODE_DIR}")
 fi
 echo "[INFO] H3 Continuum ready: $(cat /opt/h3-continuum-git-commit.txt); 256-chunk patch applied"
 
-# Find NVIDIA CUDA 12 user-space libraries installed by pip without hard-coding
-# the Python minor version or site-packages directory.
-PY_SITE="$(python3 - <<'PY'
-import site
-paths = site.getsitepackages()
-print(paths[0] if paths else "")
-PY
-)"
-
-if [[ -n "${PY_SITE}" ]]; then
-    for cuda_lib_dir in \
-        "${PY_SITE}/nvidia/cublas/lib" \
-        "${PY_SITE}/nvidia/cudnn/lib"
-    do
-        if [[ -d "${cuda_lib_dir}" ]]; then
-            export LD_LIBRARY_PATH="${cuda_lib_dir}:${LD_LIBRARY_PATH:-}"
-        fi
-    done
-fi
 
 # Compile JIT extensions only for CUDA architectures actually visible to the
 # container. This supports homogeneous or mixed visible GPU sets and avoids
