@@ -173,13 +173,15 @@ RUN python3 -m pip install --no-cache-dir \
     "bitsandbytes>=0.50.0" \
     diffusers
 
-
 RUN python3 -m pip install --no-cache-dir \
     openai
 
 # Dependencies used by the mounted custom-node collection.
+# color-matcher and mss are required by comfyui-kjnodes (restored 2026-10-28).
 RUN python3 -m pip install --no-cache-dir \
-    jsonschema
+    jsonschema \
+    color-matcher \
+    mss
 
 # rembg is imported by comfyui_tinyterranodes and Dance_Movie_Automation.
 # It may pull the CPU onnxruntime wheel; the onnxruntime-gpu resolution step
@@ -189,16 +191,11 @@ RUN python3 -m pip install --no-cache-dir "rembg==2.0.67"
 RUN python3 -m pip install --no-cache-dir \
     tensorboard
 
-
-
 # -----------------------------------------------------------------------------
 # SAM2 and NVIDIA VFX
 # -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir \
     git+https://github.com/facebookresearch/sam2.git
-
-
-
 
 # -----------------------------------------------------------------------------
 # Re-establish the critical numerical / PyTorch stack after broad dependencies.
@@ -217,23 +214,11 @@ RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
     "torchaudio==${TORCHAUDIO_VERSION}" \
     --index-url https://download.pytorch.org/whl/cu130
 
-# xFormers 0.0.35 uses the PyTorch stable ABI for PyTorch 2.10+.
-
 # Build SageAttention 2.2.0 CUDA kernels for the RTX 3090 (SM 8.6).
 # The upstream 2.2.0 PyPI publication failed, so install the official Git tag.
 # This requires the CUDA development base image already used above.
 RUN TORCH_CUDA_ARCH_LIST="8.6" python3 -m pip install --no-cache-dir --no-build-isolation --no-deps \
     "git+https://github.com/thu-ml/SageAttention.git@v2.2.0"
-
-# -----------------------------------------------------------------------------
-# llama-cpp-python
-#
-# Prefer the project's official CUDA 13 wheel. If pip cannot find that wheel,
-# --prefer-binary still permits a source fallback using the CUDA build flags
-# below rather than depending on a hard-coded installed-library path.
-# -----------------------------------------------------------------------------
-
-
 
 # -----------------------------------------------------------------------------
 # ONNX Runtime
@@ -438,9 +423,8 @@ mkdir -p \
 
 mkdir -p /app/ComfyUI/custom_nodes
 
-
 # The custom_nodes directory is a persistent bind mount. Expose the image-owned,
-# already patched Continuum checkout through a symlink, as for SeedVR2 and PDD.
+# already patched Continuum checkout through a symlink.
 CONTINUUM_IMAGE_DIR=/opt/ComfyUI-H3-Continuum
 CONTINUUM_NODE_DIR=/app/ComfyUI/custom_nodes/ComfyUI-H3-Continuum
 if [[ ! -L "${CONTINUUM_NODE_DIR}" ]] || [[ "$(readlink "${CONTINUUM_NODE_DIR}")" != "${CONTINUUM_IMAGE_DIR}" ]]; then
@@ -454,7 +438,6 @@ if [[ ! -L "${CONTINUUM_NODE_DIR}" ]] || [[ "$(readlink "${CONTINUUM_NODE_DIR}")
     ln -s "${CONTINUUM_IMAGE_DIR}" "${CONTINUUM_NODE_DIR}"
 fi
 echo "[INFO] H3 Continuum ready: $(cat /opt/h3-continuum-git-commit.txt); 256-chunk patch applied"
-
 
 # Compile JIT extensions only for CUDA architectures actually visible to the
 # container. This supports homogeneous or mixed visible GPU sets and avoids
